@@ -97,6 +97,8 @@ public:
                 // Check that the result was actually materialized.
                 if (sqlite3_column_bytes(stmt, 0) <= 0)
                     throw std::runtime_error("empty PK result");
+                // Release the SHARED read lock before the next operation.
+                sqlite3_reset(stmt);
                 return;
             }
             if ((rc == SQLITE_BUSY || rc == SQLITE_LOCKED) && attempt < 499) {
