@@ -60,8 +60,7 @@ int main() {
     try {
         require(sqlite_express_register(&config) == SQLITE_OK, "register VFS");
         std::cerr << "TEST first open\n";
-        sqlite3 *std::cerr << "TEST reopen\n";
-        db = openExpress(path);
+        sqlite3 *db = openExpress(path);
         require(sqlite_express_unregister() == SQLITE_BUSY,
                 "unregister must refuse open handles");
         require(scalar(db, "PRAGMA mmap_size") == 0, "no mmap");
@@ -98,6 +97,7 @@ int main() {
                 "manual flush of committed pages");
         require(sqlite3_close(db) == SQLITE_OK, "close database");
 
+        std::cerr << "TEST reopen after flush\n";
         db = openExpress(path);
         require(scalar(db, "SELECT count(*) FROM events") == 300,
                 "reopen count after a RocksDB restore");
@@ -113,6 +113,7 @@ int main() {
         std::cerr << "TEST bad key\n";
         config.key = wrongKey;
         require(sqlite_express_register(&config) == SQLITE_OK, "register wrong key");
+        std::cerr << "TEST reopen bad key\n";
         db = openExpress(path);
         sqlite3_stmt *stmt = nullptr;
         const int rc = sqlite3_prepare_v2(db, "SELECT count(*) FROM events", -1,
