@@ -1,0 +1,39 @@
+name: SQLite Express benchmark (single database)
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'benchmarks/**'
+      - '.github/workflows/benchmark.yml'
+      - 'CMakeLists.txt'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y cmake g++ libsqlite3-dev librocksdb-dev libzstd-dev libssl-dev
+      - name: System information
+        run: |
+          lscpu | grep -E 'Model name:|CPU\(s\):|Thread\(s\) per core:|Core\(s\) per socket:'
+          free -h
+      - name: Configure benchmark
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_BUILD_TESTS=OFF -DSQLITE_EXPRESS_BUILD_BENCHMARKS=ON
+      - name: Build benchmark
+        run: cmake --build build --parallel 2
+      - name: Benchmark one SQLite Express database with 1, 4, 16 connections
+        shell: bash
+        run: |
+          set -o pipefail
+          timeout 240s ./build/sqlite_express_bench --scale=1 | tee benchmark-results.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sqlite-express-benchmark-results
+          path: benchmark-results.txt
+          if-no-files-found: ignore
