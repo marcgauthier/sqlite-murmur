@@ -17,13 +17,13 @@ find_path(ZSTD_INCLUDE_DIR NAMES zstd.h REQUIRED)
 add_library(sqlite_express STATIC src/sqlite_express.cpp)
 add_library(sqlite_express::sqlite_express ALIAS sqlite_express)
 target_include_directories(sqlite_express
-  PUBLIC $<BUILD_INTERFACE:\${CMAKE_CURRENT_SOURCE_DIR}/include>
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
          $<INSTALL_INTERFACE:include>
-  PRIVATE \${ROCKSDB_INCLUDE_DIR} \${ZSTD_INCLUDE_DIR}
+  PRIVATE ${ROCKSDB_INCLUDE_DIR} ${ZSTD_INCLUDE_DIR}
 )
 target_link_libraries(sqlite_express
   PUBLIC SQLite::SQLite3
-  PRIVATE OpenSSL::Crypto \${ROCKSDB_LIBRARY} \${ZSTD_LIBRARY} Threads::Threads
+  PRIVATE OpenSSL::Crypto ${ROCKSDB_LIBRARY} ${ZSTD_LIBRARY} Threads::Threads
 )
 target_compile_options(sqlite_express PRIVATE -Wall -Wextra -Wpedantic)
 
@@ -36,7 +36,7 @@ endif()
 
 include(GNUInstallDirs)
 install(TARGETS sqlite_express EXPORT sqlite_expressTargets
-  ARCHIVE DESTINATION \${CMAKE_INSTALL_LIBDIR})
-install(FILES include/sqlite_express.h DESTINATION \${CMAKE_INSTALL_INCLUDEDIR})
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(FILES include/sqlite_express.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT sqlite_expressTargets
-  NAMESPACE sqlite_express:: DESTINATION \${CMAKE_INSTALL_LIBDIR}/cmake/sqlite_express)
+  NAMESPACE sqlite_express:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sqlite_express)
