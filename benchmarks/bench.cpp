@@ -279,10 +279,22 @@ int main(int argc, char **argv) {
             if (countRows() != static_cast<int>(expectedCount))
                 throw std::runtime_error("row count mismatch; incomplete operations");
         }
-        // Persistence isn't timed. Confirm on-disk rows survive a reopen.
-        check(sqlite_express_flush(path.c_str()), nullptr, "final flush");
+        // Persistence isn't timed. Hold an active handle during flush, then
+        // close and reopen to verify the recovered image.
+        {
+            Connection db;
+            check(sqlite_express_flush(path.c_str()), db.db, "final flush");
+        }
         if (countRows() != static_cast<int>(expectedCount))
             throw std::runtime_error("reopen row count mismatch");
+        {
+            Connection db;
+            Statement integrity(db.db, "PRAGMA integrity_check");
+            if (sqlite3_step(integrity.stmt) != SQLITE_ROW ||
+                std::string(reinterpret_cast<const char *>(
+                    sqlite3_column_text(integrity.stmt, 0))) != "ok")
+                throw std::runtime_error("SQLite integrity check failed");
+        }
         check(sqlite_express_unregister(), nullptr, "unregister VFS");
         std::filesystem::remove_all(path);
         std::cout << "BENCH_DONE,expected_rows=" << expectedCount << std::endl;
