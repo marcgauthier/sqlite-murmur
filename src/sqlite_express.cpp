@@ -346,6 +346,10 @@ struct Store {
             const uint64_t firstGone = (target + kBlock - 1) / kBlock;
             if (!txnTrim || firstGone < txnTrimAt) txnTrimAt = firstGone;
             txnTrim = true;
+            for (auto it = touched.begin(); it != touched.end();) {
+                if (*it >= firstGone) it = touched.erase(it);
+                else ++it;
+            }
             for (auto it = cache.begin(); it != cache.end();) {
                 if (it->first >= firstGone) {
                     lru.erase(it->second.lru);
@@ -376,6 +380,14 @@ struct Store {
     // COMMIT_PHASETWO provides a fallback for first-time database creation.
     void completeTransaction() {
         std::lock_guard<std::mutex> guard(mu);
+        // Truncation invalidates pending versions from earlier commits as well.
+        // WriteBatch will delete that range before re-inserting current pages.
+        if (txnTrim) {
+            for (auto it = pending.begin(); it != pending.end();) {
+                if (it->first >= txnTrimAt) it = pending.erase(it);
+                else ++it;
+            }
+        }
         for (uint64_t id : touched) {
             auto it = cache.find(id);
             if (it != cache.end()) pending[id] = it->second.encrypted;
