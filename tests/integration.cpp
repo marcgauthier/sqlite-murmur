@@ -59,7 +59,9 @@ int main() {
     config.rocksdb_sync = 1;
     try {
         require(sqlite_express_register(&config) == SQLITE_OK, "register VFS");
-        sqlite3 *db = openExpress(path);
+        std::cerr << "TEST first open\n";
+        sqlite3 *std::cerr << "TEST reopen\n";
+        db = openExpress(path);
         require(sqlite_express_unregister() == SQLITE_BUSY,
                 "unregister must refuse open handles");
         require(scalar(db, "PRAGMA mmap_size") == 0, "no mmap");
@@ -108,6 +110,7 @@ int main() {
         require(sqlite_express_unregister() == SQLITE_OK, "unregister");
         // An incorrect key must not silently return arbitrary plaintext.
         unsigned char wrongKey[32] = {};
+        std::cerr << "TEST bad key\n";
         config.key = wrongKey;
         require(sqlite_express_register(&config) == SQLITE_OK, "register wrong key");
         db = openExpress(path);
