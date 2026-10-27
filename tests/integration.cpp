@@ -114,13 +114,20 @@ int main() {
         config.key = wrongKey;
         require(sqlite_express_register(&config) == SQLITE_OK, "register wrong key");
         std::cerr << "TEST reopen bad key\n";
-        db = openExpress(path);
-        sqlite3_stmt *stmt = nullptr;
-        const int rc = sqlite3_prepare_v2(db, "SELECT count(*) FROM events", -1,
-                                           &stmt, nullptr);
-        require(rc != SQLITE_OK, "bad key must reject database read");
-        if (stmt) sqlite3_finalize(stmt);
-        sqlite3_close(db);
+        db = nullptr;
+        const int openRc = sqlite3_open_v2(path.c_str(), &db,
+            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
+            "sqlite-express");
+        // SQLite may read page 1 during sqlite3_open_v2 itself, so the
+        // authentication error is valid at either open or first statement.
+        if (openRc == SQLITE_OK) {
+            sqlite3_stmt *stmt = nullptr;
+            const int rc = sqlite3_prepare_v2(db, "SELECT count(*) FROM events", -1,
+                                               &stmt, nullptr);
+            require(rc != SQLITE_OK, "bad key must reject database read");
+            if (stmt) sqlite3_finalize(stmt);
+        }
+        if (db) sqlite3_close(db);
         require(sqlite_express_unregister() == SQLITE_OK, "unregister wrong key");
         std::filesystem::remove_all(path);
         std::cout << "sqlite-express integration test passed\n";
