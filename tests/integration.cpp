@@ -32,6 +32,18 @@ static int scalar(sqlite3 *db, const char *query) {
     return result;
 }
 
+static std::string scalarText(sqlite3 *db, const char *query) {
+    sqlite3_stmt *stmt = nullptr;
+    require(sqlite3_prepare_v2(db, query, -1, &stmt, nullptr) == SQLITE_OK,
+            std::string("prepare: ") + sqlite3_errmsg(db));
+    require(sqlite3_step(stmt) == SQLITE_ROW,
+            std::string("step: ") + sqlite3_errmsg(db));
+    const auto *v = sqlite3_column_text(stmt, 0);
+    std::string result = v ? reinterpret_cast<const char *>(v) : "";
+    sqlite3_finalize(stmt);
+    return result;
+}
+
 static sqlite3 *openExpress(const std::string &path) {
     sqlite3 *db = nullptr;
     int rc = sqlite3_open_v2(path.c_str(), &db,
@@ -103,8 +115,8 @@ int main() {
                 "reopen count after a RocksDB restore");
         require(scalar(db, "SELECT count(*) FROM events WHERE body='final 5'") == 1,
                 "reopen most recent coalesced value");
-        require(scalar(db, "PRAGMA integrity_check='events'") >= 0,
-                "sqlite integrity check executed");
+        require(scalarText(db, "PRAGMA integrity_check") == "ok",
+                "SQLite database integrity after recovery");
         require(sqlite3_close(db) == SQLITE_OK, "close reopen");
 
         require(sqlite_express_unregister() == SQLITE_OK, "unregister");
