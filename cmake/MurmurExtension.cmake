@@ -40,10 +40,10 @@ add_custom_target(murmur_ext_build ALL DEPENDS "${murmur_ext_archive}")
 add_library(murmur_ext_rust STATIC IMPORTED GLOBAL)
 set_target_properties(murmur_ext_rust PROPERTIES IMPORTED_LOCATION "${murmur_ext_archive}")
 add_dependencies(murmur_ext_rust murmur_ext_build)
-add_library(sqlite_express_murmur_ext INTERFACE)
-add_library(sqlite_express::murmur_ext ALIAS sqlite_express_murmur_ext)
-target_link_libraries(sqlite_express_murmur_ext INTERFACE
-  murmur_ext_rust sqlite_express Threads::Threads ${CMAKE_DL_LIBS} m)
-target_include_directories(sqlite_express_murmur_ext INTERFACE "${PROJECT_SOURCE_DIR}/include")
-target_compile_definitions(sqlite_express_murmur_ext INTERFACE
-  SQLITE_EXPRESS_MURMUR_EXT_VERSION="${MURMUR_EXT_VERSION}")
+add_library(sqlite_murmur_ext INTERFACE)
+add_library(sqlite_murmur::murmur_ext ALIAS sqlite_murmur_ext)
+target_link_libraries(sqlite_murmur_ext INTERFACE
+  murmur_ext_rust sqlite_murmur Threads::Threads ${CMAKE_DL_LIBS} m)
+target_include_directories(sqlite_murmur_ext INTERFACE "${PROJECT_SOURCE_DIR}/include")
+target_compile_definitions(sqlite_murmur_ext INTERFACE
+  SQLITE_MURMUR_EXT_VERSION="${MURMUR_EXT_VERSION}")

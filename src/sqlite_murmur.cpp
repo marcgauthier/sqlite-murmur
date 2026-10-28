@@ -1,4 +1,4 @@
-#include "sqlite_express.h"
+#include "sqlite_murmur.h"
 
 #include <rocksdb/db.h>
 #include <rocksdb/cache.h>
@@ -13,7 +13,7 @@
 #include <openssl/evp.h>
 #include <openssl/rand.h>
 #include <zstd.h>
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
 #include <aegis.h>
 #endif
 
@@ -53,7 +53,7 @@ const char *cipherName(Cipher cipher) {
     return cipher == Cipher::AES256GCM ? "aes256gcm" : "aegis256";
 }
 constexpr char kEndKey[] = "q";
-constexpr const char *kVfsName = "sqlite-express";
+constexpr const char *kVfsName = "sqlite-murmur";
 constexpr size_t kRocksBlockCacheBytes = 32 * 1024 * 1024;
 
 bool parseUnsigned(const char *text, uint64_t maximum, uint64_t &value) {
@@ -140,7 +140,7 @@ template<class T, size_t Limit>
 struct ReusePool : std::enable_shared_from_this<ReusePool<T, Limit>> {
     std::mutex mu;
     std::vector<std::unique_ptr<T>> idle;
-#ifdef SQLITE_EXPRESS_TEST_HOOKS
+#ifdef SQLITE_MURMUR_TEST_HOOKS
     std::atomic<size_t> created{0};
     std::atomic<size_t> reused{0};
 #endif
@@ -163,7 +163,7 @@ struct ReusePool : std::enable_shared_from_this<ReusePool<T, Limit>> {
             std::lock_guard<std::mutex> guard(mu);
             if (!idle.empty()) { value = std::move(idle.back()); idle.pop_back(); }
         }
-#ifdef SQLITE_EXPRESS_TEST_HOOKS
+#ifdef SQLITE_MURMUR_TEST_HOOKS
         if (value) ++reused; else ++created;
 #endif
         if (!value) value = std::make_unique<T>();
@@ -303,7 +303,7 @@ bool decryptAES(const unsigned char key[32], uint64_t page,
 
 // EXP1 is the original AES-256-GCM format. EXP2 uses AEGIS-256 with a
 // 32-byte nonce and 32-byte tag. Authenticate its header, flag and page ID.
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
 std::array<unsigned char, 13> aegisAAD(uint64_t page, unsigned char flag) {
     std::array<unsigned char, 13> aad{'E', 'X', 'P', '2', flag};
     for (int i = 12; i >= 5; --i) {
@@ -319,7 +319,7 @@ bool encrypt(Cipher cipher, const unsigned char key[32], uint64_t page,
              std::string &result) {
     if (cipher == Cipher::AES256GCM)
         return encryptAES(key, page, data, n, compressed, result);
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
     unsigned char nonce[aegis256_NPUBBYTES];
     if (RAND_bytes(nonce, sizeof(nonce)) != 1) return false;
     const auto aad = aegisAAD(page, compressed ? 1 : 0);
@@ -340,7 +340,7 @@ bool decrypt(Cipher cipher, const unsigned char key[32], uint64_t page,
              const std::string &record, Block &out, DecodeWorkspace &workspace) {
     workspace.blockDirty = true;
     if (cipher == Cipher::AES256GCM) return decryptAES(key, page, record, out, workspace);
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
     constexpr size_t overhead = 5 + aegis256_NPUBBYTES + aegis256_ABYTES_MAX;
     if (record.size() < overhead || std::memcmp(record.data(), "EXP2", 4) != 0)
         return false;
@@ -479,7 +479,7 @@ struct Store {
     std::shared_ptr<rocksdb::Cache> blockCache;
     std::unique_ptr<rocksdb::DB> db;
     std::shared_ptr<rocksdb::Statistics> statistics;
-    sqlite_express_stats counters{};
+    sqlite_murmur_stats counters{};
     // Lock order: mutationMu -> flushMu (when needed) -> mu. Pool locks never
     // remain held while acquiring these locks or doing crypto/IO.
     std::mutex mutationMu;
@@ -503,7 +503,7 @@ struct Store {
         uint64_t trimFrom = 0, newSize = 0;
     };
     std::unique_ptr<FlushBatch> failedBatch; // Owned across retries; failure recovery needs no allocation.
-#ifdef SQLITE_EXPRESS_TEST_HOOKS
+#ifdef SQLITE_MURMUR_TEST_HOOKS
     size_t lruMoves = 0, evictionScans = 0;
     std::atomic<bool> testFailWrite{false};
     std::function<void(const char *)> testHook;
@@ -577,7 +577,7 @@ struct Store {
         const auto cipherStatus = db->Get(rocksdb::ReadOptions(), kMetaCipher, &value);
         if (cipherStatus.ok()) {
             if (value == "aes256gcm") settings.cipher = Cipher::AES256GCM;
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
             else if (value == "aegis256") settings.cipher = Cipher::AEGIS256;
 #endif
             else return false;
@@ -739,7 +739,7 @@ struct Store {
         auto it = cache.find(id);
         if (it != cache.end() && it->second.lru != lru.begin()) {
             lru.splice(lru.begin(), lru, it->second.lru);
-#ifdef SQLITE_EXPRESS_TEST_HOOKS
+#ifdef SQLITE_MURMUR_TEST_HOOKS
             ++lruMoves;
 #endif
         }
@@ -767,7 +767,7 @@ struct Store {
         auto it = lru.end();
         while (cleanCount && cache.size() > settings.cachePages && it != lru.begin()) {
             --it;
-#ifdef SQLITE_EXPRESS_TEST_HOOKS
+#ifdef SQLITE_MURMUR_TEST_HOOKS
             ++evictionScans;
 #endif
             auto c = cache.find(*it);
@@ -1141,7 +1141,7 @@ struct Store {
                     options.sync = settings.rocksdbSync;
                     options.disableWAL = false;
                     testPoint("flush_write");
-#ifdef SQLITE_EXPRESS_TEST_HOOKS
+#ifdef SQLITE_MURMUR_TEST_HOOKS
                     if (testFailWrite) rc = SQLITE_IOERR_WRITE;
                     else
 #endif
@@ -1182,7 +1182,7 @@ struct Store {
         return SQLITE_OK;
     } catch (const std::bad_alloc &) { return SQLITE_NOMEM; }
 
-    int getStats(sqlite_express_stats *out) {
+    int getStats(sqlite_murmur_stats *out) {
         std::lock_guard<std::mutex> serial(flushMu);
         std::lock_guard<std::mutex> guard(mu);
         *out = counters;
@@ -1208,7 +1208,7 @@ struct Store {
     }
 };
 
-struct ExpressFile {
+struct MurmurFile {
     sqlite3_file base{};
     std::shared_ptr<Store> store;
     std::shared_ptr<MemFile> mem;
@@ -1217,7 +1217,7 @@ struct ExpressFile {
     bool mainDb = false;
     bool readOnly = false;
     bool deleteOnClose = false;
-    sqlite_express_extension extension{};
+    sqlite_murmur_extension extension{};
 };
 
 sqlite3_vfs gVfs{};
@@ -1240,7 +1240,7 @@ std::shared_ptr<Store> findStoreForJournal(const std::string &name) {
     return it == gStores.end() ? nullptr : it->second.lock();
 }
 
-ExpressFile *f(sqlite3_file *p) { return reinterpret_cast<ExpressFile *>(p); }
+MurmurFile *f(sqlite3_file *p) { return reinterpret_cast<MurmurFile *>(p); }
 
 int ioClose(sqlite3_file *p) {
     auto *file = f(p);
@@ -1253,7 +1253,7 @@ int ioClose(sqlite3_file *p) {
         gMemFiles.erase(file->name);
     }
     if (file->extension.destroy) file->extension.destroy(file->extension.context);
-    file->~ExpressFile();
+    file->~MurmurFile();
     return SQLITE_OK;
 }
 
@@ -1373,12 +1373,12 @@ int ioCheckReserved(sqlite3_file *p, int *out) {
 
 int ioFileControl(sqlite3_file *p, int op, void *arg) {
     auto *file = f(p);
-    if (file->mainDb && op == SQLITE_EXPRESS_FCNTL_EXTENSION && arg) {
+    if (file->mainDb && op == SQLITE_MURMUR_FCNTL_EXTENSION && arg) {
         if (file->extension.context) return SQLITE_MISUSE;
-        file->extension = *static_cast<sqlite_express_extension *>(arg);
+        file->extension = *static_cast<sqlite_murmur_extension *>(arg);
         return SQLITE_OK;
     }
-    if (file->mainDb && op == SQLITE_EXPRESS_FCNTL_FLUSH)
+    if (file->mainDb && op == SQLITE_MURMUR_FCNTL_FLUSH)
         return file->store->flush();
     if (file->mainDb && op == SQLITE_FCNTL_PRAGMA && arg) {
         auto **arguments = static_cast<char **>(arg);
@@ -1456,10 +1456,10 @@ int ioFileControl(sqlite3_file *p, int op, void *arg) {
                 if (sqlite3_stricmp(arguments[2], "aes256gcm") == 0)
                     cipher = Cipher::AES256GCM;
                 else if (sqlite3_stricmp(arguments[2], "aegis256") == 0) {
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
                     cipher = Cipher::AEGIS256;
 #else
-                    arguments[0] = sqlite3_mprintf("aegis256 requires a build with SQLITE_EXPRESS_ENABLE_AEGIS256=ON");
+                    arguments[0] = sqlite3_mprintf("aegis256 requires a build with SQLITE_MURMUR_ENABLE_AEGIS256=ON");
                     return arguments[0] ? SQLITE_ERROR : SQLITE_NOMEM;
 #endif
                 } else {
@@ -1480,7 +1480,7 @@ int ioFileControl(sqlite3_file *p, int op, void *arg) {
         }
         if (arguments[1] && sqlite3_stricmp(arguments[1], "journal_mode") == 0 &&
             arguments[2] && sqlite3_stricmp(arguments[2], "delete") != 0) {
-            arguments[0] = sqlite3_mprintf("sqlite-express requires journal_mode=DELETE");
+            arguments[0] = sqlite3_mprintf("sqlite-murmur requires journal_mode=DELETE");
             return SQLITE_ERROR;
         }
         if (arguments[1] && sqlite3_stricmp(arguments[1], "mmap_size") == 0) {
@@ -1508,12 +1508,12 @@ const sqlite3_io_methods gMethods = {
 
 int vfsOpen(sqlite3_vfs *, const char *zName, sqlite3_file *out,
             int flags, int *outFlags) {
-    auto *file = new (out) ExpressFile();
+    auto *file = new (out) MurmurFile();
     try {
         file->mainDb = (flags & SQLITE_OPEN_MAIN_DB) != 0;
         file->deleteOnClose = (flags & SQLITE_OPEN_DELETEONCLOSE) != 0;
         file->name = zName ? std::string(zName) :
-            (":sqlite-express-temp:" + std::to_string(++gTempId));
+            (":sqlite-murmur-temp:" + std::to_string(++gTempId));
         if (file->mainDb) {
             file->readOnly = (flags & SQLITE_OPEN_READONLY) != 0;
             std::lock_guard<std::mutex> guard(gMu);
@@ -1522,7 +1522,7 @@ int vfsOpen(sqlite3_vfs *, const char *zName, sqlite3_file *out,
             if (!file->store) {
                 auto store = std::make_shared<Store>(gSettings);
                 if (!store->start(file->name, (flags & SQLITE_OPEN_CREATE) != 0)) {
-                    file->~ExpressFile();
+                    file->~MurmurFile();
                     return SQLITE_CANTOPEN;
                 }
                 weak = store;
@@ -1531,7 +1531,7 @@ int vfsOpen(sqlite3_vfs *, const char *zName, sqlite3_file *out,
         } else {
             if (file->name.size() >= 4 &&
                 file->name.compare(file->name.size() - 4, 4, "-wal") == 0) {
-                file->~ExpressFile();
+                file->~MurmurFile();
                 return SQLITE_CANTOPEN; // WAL requires a different recovery design
             }
             std::lock_guard<std::mutex> guard(gMu);
@@ -1547,7 +1547,7 @@ int vfsOpen(sqlite3_vfs *, const char *zName, sqlite3_file *out,
         if (outFlags) *outFlags = flags;
         return SQLITE_OK;
     } catch (...) {
-        file->~ExpressFile();
+        file->~MurmurFile();
         return SQLITE_NOMEM;
     }
 }
@@ -1616,11 +1616,11 @@ int vfsError(sqlite3_vfs *, int n, char *out) {
 }
 } // namespace
 
-extern "C" int sqlite_express_register(const sqlite_express_config *config) {
+extern "C" int sqlite_murmur_register(const sqlite_murmur_config *config) {
     if (!config || !config->key) return SQLITE_MISUSE;
     std::lock_guard<std::mutex> guard(gMu);
     if (gRegistered) return SQLITE_MISUSE;
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
     static std::once_flag aegisOnce;
     static int aegisStatus = -1;
     std::call_once(aegisOnce, [] { aegisStatus = aegis_init(); });
@@ -1634,7 +1634,7 @@ extern "C" int sqlite_express_register(const sqlite_express_config *config) {
     gSettings.rocksdbSync = config->rocksdb_sync != 0;
     gVfs = sqlite3_vfs{};
     gVfs.iVersion = 1;
-    gVfs.szOsFile = sizeof(ExpressFile);
+    gVfs.szOsFile = sizeof(MurmurFile);
     gVfs.mxPathname = gParent->mxPathname;
     gVfs.zName = kVfsName;
     gVfs.pAppData = nullptr;
@@ -1667,26 +1667,26 @@ static int lookupStore(const char *path, std::shared_ptr<Store> &store) {
     return store ? SQLITE_OK : SQLITE_NOTFOUND;
 }
 
-extern "C" int sqlite_express_flush(const char *path) {
+extern "C" int sqlite_murmur_flush(const char *path) {
     std::shared_ptr<Store> store;
     const int rc = lookupStore(path, store);
     return rc == SQLITE_OK ? store->flush() : rc;
 }
 
-extern "C" int sqlite_express_get_stats(const char *path, sqlite_express_stats *out) {
+extern "C" int sqlite_murmur_get_stats(const char *path, sqlite_murmur_stats *out) {
     if (!out) return SQLITE_MISUSE;
     std::shared_ptr<Store> store;
     const int rc = lookupStore(path, store);
     return rc == SQLITE_OK ? store->getStats(out) : rc;
 }
 
-extern "C" int sqlite_express_checkpoint(const char *path) {
+extern "C" int sqlite_murmur_checkpoint(const char *path) {
     std::shared_ptr<Store> store;
     const int rc = lookupStore(path, store);
     return rc == SQLITE_OK ? store->checkpoint() : rc;
 }
 
-extern "C" int sqlite_express_unregister(void) {
+extern "C" int sqlite_murmur_unregister(void) {
     std::lock_guard<std::mutex> guard(gMu);
     for (const auto &it : gStores) if (!it.second.expired()) return SQLITE_BUSY;
     if (!gRegistered) return SQLITE_MISUSE;

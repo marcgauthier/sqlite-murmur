@@ -1,4 +1,4 @@
-# sqlite-express
+# sqlite-murmur
 
 Experimental **SQLite Virtual File System** backed by RocksDB, with memory-first
 writes, page coalescing, Zstandard compression and AES-256-GCM or AEGIS-256 encryption.
@@ -142,50 +142,35 @@ ctest --test-dir build --output-on-failure
 
 The first build compiles the bundled libraries and takes longer than later builds.
 OpenSSL uses its own out-of-tree Perl/GNU Make build; other libraries use CMake.
-`SQLITE_EXPRESS_OPENSSL_JOBS` controls OpenSSL's parallelism (default 2).
+`SQLITE_MURMUR_OPENSSL_JOBS` controls OpenSSL's parallelism (default 2).
 Linux and macOS builds use their native compilers and system runtime libraries.
 Native Windows/cross-compilation is not configured by this OpenSSL wrapper.
 
 AEGIS-256 and the `benchmark` executable are enabled by default. To build an
-AES-only library, set `-DSQLITE_EXPRESS_ENABLE_AEGIS256=OFF`; its benchmark can run
-with `--cipher=aes256gcm`. `-DSQLITE_EXPRESS_BUILD_BENCHMARKS=OFF` omits the executable.
+AES-only library, set `-DSQLITE_MURMUR_ENABLE_AEGIS256=OFF`; its benchmark can run
+with `--cipher=aes256gcm`. `-DSQLITE_MURMUR_BUILD_BENCHMARKS=OFF` omits the executable.
 Dependency versions, upstream license files, archive checksums and update
 instructions are recorded in `third-party/`. Generated files stay under `build/`.
 
-## Automatic QUIC replication with Murmur
+## Optional Murmur session replication
 
-Enable `SQLITE_EXPRESS_ENABLE_MURMUR=ON` together with
-`SQLITE_EXPRESS_ENABLE_CRSQLITE=ON` to build the Rust replication extension in
-[`third-party/murmur-replication`](third-party/murmur-replication/README.md).
-It discovers peers using bootstrap addresses and SWIM/gossip, authenticates them
-with mutual TLS, and automatically exchanges cr-sqlite changes over QUIC with
-persistent progress, retries and acknowledgements after VFS persistence.
-
-Clients supply all settings through `PRAGMA murmur_*` and use SQLite SQL for
-start/stop, synchronization and peer administration. There is no PostgreSQL wire
-protocol or separate database server. Both static and loadable builds are
-available. See the complete [SQL usage guide](third-party/murmur-replication/USAGE.md)
-for certificates, PRAGMAs, durability and lifecycle requirements.
-
-## Optional cr-sqlite replication
-
-The updated **cr-sqlite-2** working-tree snapshot from `../cr-sqlite-2` is vendored
-in `third-party/cr-sqlite`, including its local tracked/untracked source changes,
-pinned Rust submodule and locked Cargo packages. It is based on upstream commit
-`43ab94cac537d080aac7cb7628a435c02ee9e268`, with local write/merge optimizations and
-staged/blob bulk-ingest APIs. Its exact content fingerprint and provenance are
-recorded in `third-party/sources.json`; `sqlite-express-revision.txt`, `crsql_sha()`
-and benchmark `crsqlite_version` identify the captured local revision. Updating the
-sibling checkout does not change this build until its sources are explicitly
-revendored. This snapshot keeps the existing upstream version string internally;
-it is not represented as a new official upstream release. The optional build uses
-our SQLite amalgamation, rather than compiling a second SQLite. Install compiler tooling once, then the build
-uses only local sources (`cargo --frozen` with offline configuration):
+Enable `SQLITE_MURMUR_ENABLE_MURMUR_EXT=ON` to build the Rust session
+replication extension in
+[`third-party/murmur-extension`](third-party/murmur-extension/README.md)
+statically into the benchmark. It captures table changes with the SQLite
+Sessions API, keeps CRDT metadata and HLC clocks in a Spool directory beside
+the database, and merges with per-column last-writer-wins. The extension also
+offers built-in QUIC transport (`murmur_repl_*`); the benchmark uses only
+local capture and manual log exchange. Its engine crates
+(murmur-crdt/spool/replication) are local path dependencies. The older
+cr-sqlite-based integration under `third-party/murmur-replication` is
+currently unwired pending adaptation. Install a modern Rust toolchain once,
+then the build uses only local sources (`cargo --frozen` with offline
+configuration):
 
 ```bash
-sudo apt-get install libclang-dev
-rustup toolchain install nightly-2023-10-05 --profile minimal
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_ENABLE_CRSQLITE=ON
+rustup toolchain install stable --profile minimal
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_MURMUR_ENABLE_MURMUR_EXT=ON
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ./build/benchmark --replication=on --batch-size=1
@@ -194,40 +179,31 @@ ctest --test-dir build --output-on-failure
 
 Replication defaults to **off**; `--replication=off` provides the baseline. Each
 run uses 80% reads / 20% inserts for 60 seconds, excluding seeding and verification.
-When enabled, `records` is registered as a CRR before seeding; every insert runs
-cr-sqlite triggers and maintains replication clocks. `tracked_changes` verifies
-that each timed insert can be exported through `crsql_changes`; reopening also
-checks the persisted change count. File sizes include replication metadata.
-These runs measure **local replication tracking**, without peer transport or
-remote change application in the timed loop. The replication integration test
-separately exchanges changes between two encrypted databases and checks inserts,
-updates, deletes, idempotent replay, staged bulk ingestion, rollback, cross-connection
-version-cache invalidation and reopening.
+When enabled, `records` is adopted with `murmur_enable_sync` before seeding; every
+timed transaction captures its session changeset with `murmur_collect` and folds it
+with `murmur_drain`. `tracked_changes` verifies that each timed insert was logged;
+reopening also checks the persisted log count. Reported sizes cover the RocksDB
+files plus the Spool directory. These runs measure **local replication tracking**,
+without peer transport or remote change application in the timed loop.
 
-To measure **incoming replication** with the new API, use:
+To measure **incoming replication**, use:
 
 ```bash
-./build/benchmark --ingest=blob --batch-size=1
-./build/benchmark --ingest=blob --batch-size=100
-# Same incoming changes, applied one INSERT per change for comparison:
-./build/benchmark --ingest=row --batch-size=100
+./build/benchmark --ingest=log --batch-size=1
+./build/benchmark --ingest=log --batch-size=100
 ```
 
-`--ingest=row|blob` enables replication automatically. A separate in-memory source
-inserts new records, exports **all nine columns verbatim** with
-`SELECT * FROM crsql_changes WHERE db_version>?`, and packs CRSB v1 bytes in C++
-using the format from `crsql_correctness.bulk.pack_changes`. Blob mode binds the
-result to `SELECT crsql_ingest_blob(?)`, checks its applied count and commits.
-Row mode binds the same captured values to `INSERT INTO crsql_changes`. Each
-batch uses one explicit destination transaction in both modes, including batch 1.
-Four random destination reads per imported row follow the commit, preserving
-80% reads / 20% successfully applied row writes. The seeded destination starts
-with 50,000 locally created records; incoming IDs are new and never replayed.
+`--ingest=log` enables replication automatically. A separate file-backed source
+database inserts new records and exports the incremental replication log with
+`SELECT murmur_log_export(origin, version)`; the destination applies each batch
+with `SELECT murmur_apply(?)`, which commits internally. Four random destination
+reads per imported row follow, preserving 80% reads / 20% successfully applied
+row writes. The seeded destination starts with 50,000 locally created records;
+incoming IDs are new and never replayed.
 
-The 60-second timer sums **destination apply, commit and read work only**.
-Source inserts, export, packing and batch cleanup are excluded. Both modes
-perform the same export and packing work outside that timer. The source uses
-ordinary in-memory SQLite; only the destination uses the encrypted RocksDB VFS.
+The 60-second timer sums **destination apply and read work only**. Source inserts,
+collection, export and batch cleanup are excluded. The source uses an ordinary
+SQLite file; only the destination uses the encrypted RocksDB VFS.
 `connections=2` includes that source connection. `wall_seconds`,
 `source_prepare_seconds`, `packed_bytes` and `applied_changes` are reported;
 `wall_ops_per_second_including_persistence` includes source preparation, cleanup
@@ -236,47 +212,41 @@ background flushing continues during excluded source work, so these active-time
 rates must not be compared directly to continuous local-insert rates. No network
 is simulated. Disk size and compression statistics cover the destination only.
 
-Tests compare the C++ packer byte-for-byte with Python, including NULL, integer,
-float, UTF-8/embedded NUL, empty text and blob values. Differential replication
-tests compare blob and row application of inserts, updates, deletion and replay,
-including base rows, exported clocks, database versions and rows impacted.
-Malformed input rejection and encrypted reopening are checked as well.
-
-CMake clients in this source build can link `sqlite_express::crsqlite` alongside
-`sqlite_express::sqlite_express` and include `sqlite_express_crsqlite.h`. Configure
-the VFS cipher/page size before initializing the extension on each connection
-with `sqlite3_crsqlite_init(db, &error, nullptr)`. Convert tables using
-`SELECT crsql_as_crr('main','records')` (the explicit schema avoids the upstream
-single-argument path). CRR primary keys must be non-null; other NOT NULL columns
-need defaults. Exchange the nine `crsql_changes` fields to replicate; transport
-is application supplied. Finalize application statements, call
-`SELECT crsql_finalize()`, then close the connection. The optional extension
-CMake target is currently provided for source builds, not the installed package.
+CMake clients in this source build can link `sqlite_murmur::murmur_ext` alongside
+`sqlite_murmur::sqlite_murmur` and include `sqlite_murmur_ext.h`. Initialize the
+extension on each connection with `sqlite3_murmur_ext_init(db, &error, nullptr)`,
+then `SELECT murmur_open(spool_directory)` (one spool per database), adopt tables
+with `SELECT murmur_enable_sync('records')`, capture each write transaction with
+`SELECT murmur_collect()` before COMMIT, and fold batches with
+`SELECT murmur_drain()`. Exchange incremental batches with
+`murmur_log_export`/`murmur_apply`, and call `SELECT murmur_close()` before
+closing the connection. The optional extension CMake target is currently provided
+for source builds, not the installed package.
 
 ## Usage
 
 ```cpp
-#include "sqlite_express.h"
+#include "sqlite_murmur.h"
 #include <sqlite3.h>
 
 unsigned char key[32] = {/* load a securely generated 256-bit key */};
-sqlite_express_config cfg = {};
+sqlite_murmur_config cfg = {};
 cfg.key = key;
 cfg.flush_interval_ms = 250;  // 0 = default 250
 cfg.cache_pages = 16384;      // 0 = default 16384
 cfg.rocksdb_sync = 1;         // durable RocksDB batch on each background flush
-int rc = sqlite_express_register(&cfg);
+int rc = sqlite_murmur_register(&cfg);
 if (rc != SQLITE_OK) return rc;
 
 sqlite3 *db = nullptr;
-rc = sqlite3_open_v2("data.express", &db,
-    SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "sqlite-express");
-// `data.express` is a RocksDB DIRECTORY, not a SQLite file.
+rc = sqlite3_open_v2("data.murmur", &db,
+    SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "sqlite-murmur");
+// `data.murmur` is a RocksDB DIRECTORY, not a SQLite file.
 if (rc == SQLITE_OK) sqlite3_exec(db,
     "PRAGMA journal_mode=DELETE; PRAGMA mmap_size=0;", nullptr, nullptr, nullptr);
 // Run SQL as normal.
 sqlite3_close(db);  // normal close flushes remaining committed changes
-sqlite_express_unregister();
+sqlite_murmur_unregister();
 ```
 
 The key must be the **same on every reopen**; a different key causes authenticated
@@ -286,7 +256,7 @@ still leak some structure.
 
 ## Runtime PRAGMAs
 
-After opening a connection through the `sqlite-express` VFS:
+After opening a connection through the `sqlite-murmur` VFS:
 
 ```sql
 PRAGMA flush_interval_ms = 100;   -- background persistence interval in milliseconds
@@ -306,9 +276,9 @@ PRAGMA compression;               -- read current selection
 `flush_interval_ms` accepts unsigned integers from 0 through 4294967295. It applies
 to every connection sharing this database's Store, and updating it restarts the
 background timer. It is not persisted: after all connections close, the next open
-uses the interval supplied to `sqlite_express_register`. The interval is not a
+uses the interval supplied to `sqlite_murmur_register`. The interval is not a
 maximum durability delay; memory pressure can trigger earlier persistence.
-`sqlite_express_flush` explicitly persists completed transactions.
+`sqlite_murmur_flush` explicitly persists completed transactions.
 
 `cipher` accepts `aes256gcm` or `aegis256` (case insensitive). Choose it on an empty
 database before creating tables or starting transactions. It is shared by all
@@ -355,10 +325,10 @@ settings. All connections sharing a database see the same values; other database
 retain their own settings.
 
 Changes apply to the open Store only. After its last connection closes, reopening
-uses the registration configuration and RocksDB defaults again; sqlite-express
+uses the registration configuration and RocksDB defaults again; sqlite-murmur
 does not reload tuning values from RocksDB's generated OPTIONS files.
 
-`rocksdb_sync=1` syncs subsequent sqlite-express WriteBatches to disk. Switching to
+`rocksdb_sync=1` syncs subsequent sqlite-murmur WriteBatches to disk. Switching to
 it does not itself flush pending changes or sync earlier batches. SQLite COMMIT
 still uses the configured deferred persistence interval. RocksDB WAL remains
 enabled for both values.
@@ -379,9 +349,9 @@ by connections) or RocksDB's block cache.
 
 ## API
 
-See `include/sqlite_express.h` for `sqlite_express_register`,
-`sqlite_express_flush`, `sqlite_express_get_stats`, `sqlite_express_checkpoint` and
-`sqlite_express_unregister`.
+See `include/sqlite_murmur.h` for `sqlite_murmur_register`,
+`sqlite_murmur_flush`, `sqlite_murmur_get_stats`, `sqlite_murmur_checkpoint` and
+`sqlite_murmur_unregister`.
 
 ## Benchmark
 
@@ -460,17 +430,17 @@ Reopening checks row count and database integrity before deleting the temporary
 database. For a short test, use `./build/benchmark --seconds=0.01`. CI builds the
 vendored sources, runs tests, then runs and uploads one default 60-second result.
 
-The C API `sqlite_express_get_stats(path, &stats)` snapshots cumulative per-Store
+The C API `sqlite_murmur_get_stats(path, &stats)` snapshots cumulative per-Store
 VFS/persistence counters and RocksDB WAL, SST-flush and compaction write counters.
 Counters reset on reopen; missing Stores return `SQLITE_NOTFOUND`, and null
 arguments return `SQLITE_MISUSE`. RocksDB tickers exclude filesystem/device
 amplification and are collected without timer or histogram instrumentation.
 
-`sqlite_express_checkpoint(path)` persists completed transactions, flushes RocksDB
+`sqlite_murmur_checkpoint(path)` persists completed transactions, flushes RocksDB
 memtables and waits up to 30 seconds for compaction (`SQLITE_BUSY` on timeout).
 The memtable flush itself waits for its I/O to finish. Active SQLite transactions
 are excluded. Stop concurrent writers when using it as a measurement barrier.
-This is heavier than `sqlite_express_flush`, which does not force SST creation.
+This is heavier than `sqlite_murmur_flush`, which does not force SST creation.
 
 ## Roadmap before production
 

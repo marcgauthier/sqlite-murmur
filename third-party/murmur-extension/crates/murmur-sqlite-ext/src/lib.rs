@@ -308,7 +308,7 @@ fn detect_vfs(conn: &Connection) -> Result<Option<String>, String> {
     let name = unsafe { std::ffi::CStr::from_ptr((*vfs).zName) }
         .to_string_lossy()
         .into_owned();
-    if name == "sqlite-express" {
+    if name == "sqlite-murmur" {
         Ok(Some(name))
     } else {
         Ok(None)
@@ -361,7 +361,7 @@ fn open_impl(ctx: &Context, path: String, key: Option<[u8; 32]>) -> Result<(), S
         return Err("murmur: file-backed databases only (:memory: has no stable path)".into());
     }
     // Named-VFS detection comes before the journal check: the
-    // sqlite-express VFS is DELETE-only by design, so WAL is neither
+    // sqlite-murmur VFS is DELETE-only by design, so WAL is neither
     // requested nor required there. Elsewhere WAL is a hard requirement,
     // enforced before any state changes (so a refusal leaves zero trace)
     // and persistent once set: in rollback mode a large uncommitted write
@@ -371,7 +371,7 @@ fn open_impl(ctx: &Context, path: String, key: Option<[u8; 32]>) -> Result<(), S
     // block. The pragma is a silent no-op inside a transaction, hence the
     // read-back check with an actionable error.
     let vfs = detect_vfs(&conn)?;
-    if vfs.as_deref() != Some("sqlite-express") {
+    if vfs.as_deref() != Some("sqlite-murmur") {
         let mode: String = conn
             .query_row("PRAGMA journal_mode=WAL", [], |r| r.get(0))
             .map_err(|e| format!("murmur: WAL mode check failed: {e}"))?;

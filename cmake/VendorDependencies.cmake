@@ -2,10 +2,10 @@
 include(ExternalProject)
 find_package(Threads REQUIRED)
 find_package(Perl REQUIRED)
-find_program(SQLITE_EXPRESS_MAKE NAMES gmake make REQUIRED)
-set(SQLITE_EXPRESS_OPENSSL_JOBS 2 CACHE STRING "Parallel jobs for the vendored OpenSSL build")
-if(NOT SQLITE_EXPRESS_OPENSSL_JOBS MATCHES "^[1-9][0-9]*$")
-  message(FATAL_ERROR "SQLITE_EXPRESS_OPENSSL_JOBS must be a positive integer")
+find_program(SQLITE_MURMUR_MAKE NAMES gmake make REQUIRED)
+set(SQLITE_MURMUR_OPENSSL_JOBS 2 CACHE STRING "Parallel jobs for the vendored OpenSSL build")
+if(NOT SQLITE_MURMUR_OPENSSL_JOBS MATCHES "^[1-9][0-9]*$")
+  message(FATAL_ERROR "SQLITE_MURMUR_OPENSSL_JOBS must be a positive integer")
 endif()
 set(_vendor "${PROJECT_SOURCE_DIR}/third-party")
 set(_vendor_build "${PROJECT_BINARY_DIR}/third-party")
@@ -13,16 +13,16 @@ set(_vendor_build "${PROJECT_BINARY_DIR}/third-party")
 # SQLite's amalgamation includes its core and needs only platform libraries.
 # Sessions capture replication changes for the murmur extension; the API is
 # additive (opaque session handles), so no consumer layout changes.
-add_library(sqlite_express_sqlite STATIC "${_vendor}/sqlite/sqlite3.c")
-target_compile_definitions(sqlite_express_sqlite PRIVATE SQLITE_THREADSAFE=1
+add_library(sqlite_murmur_sqlite STATIC "${_vendor}/sqlite/sqlite3.c")
+target_compile_definitions(sqlite_murmur_sqlite PRIVATE SQLITE_THREADSAFE=1
   SQLITE_ENABLE_SESSION SQLITE_ENABLE_PREUPDATE_HOOK)
-target_include_directories(sqlite_express_sqlite PUBLIC "${_vendor}/sqlite")
-target_link_libraries(sqlite_express_sqlite PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
+target_include_directories(sqlite_murmur_sqlite PUBLIC "${_vendor}/sqlite")
+target_link_libraries(sqlite_murmur_sqlite PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(UNIX)
-  set(SQLITE_EXPRESS_MATH_LIBRARY m)
-  target_link_libraries(sqlite_express_sqlite PUBLIC m)
+  set(SQLITE_MURMUR_MATH_LIBRARY m)
+  target_link_libraries(sqlite_murmur_sqlite PUBLIC m)
 endif()
-set_target_properties(sqlite_express_sqlite PROPERTIES POSITION_INDEPENDENT_CODE ON)
+set_target_properties(sqlite_murmur_sqlite PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # Build Zstd using its upstream CMake files, without command-line tools/tests.
 set(ZSTD_BUILD_PROGRAMS OFF CACHE BOOL "" FORCE)
@@ -47,7 +47,7 @@ add_subdirectory("${_vendor}/rocksdb" "${_vendor_build}/rocksdb" EXCLUDE_FROM_AL
 # Imported target dependencies ensure generated headers exist before compilation.
 set(_openssl_install "${_vendor_build}/openssl-install")
 file(MAKE_DIRECTORY "${_openssl_install}/include")
-ExternalProject_Add(sqlite_express_openssl_build
+ExternalProject_Add(sqlite_murmur_openssl_build
   SOURCE_DIR "${_vendor}/openssl"
   BINARY_DIR "${_vendor_build}/openssl"
   INSTALL_DIR "${_openssl_install}"
@@ -57,19 +57,19 @@ ExternalProject_Add(sqlite_express_openssl_build
     "--prefix=<INSTALL_DIR>" "--libdir=lib" "--openssldir=<INSTALL_DIR>/ssl"
     no-shared no-tests no-apps no-docs no-module -fPIC
     "CC=${CMAKE_C_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"
-  BUILD_COMMAND ${SQLITE_EXPRESS_MAKE} "-j${SQLITE_EXPRESS_OPENSSL_JOBS}" build_libs
-  INSTALL_COMMAND ${SQLITE_EXPRESS_MAKE} install_dev
+  BUILD_COMMAND ${SQLITE_MURMUR_MAKE} "-j${SQLITE_MURMUR_OPENSSL_JOBS}" build_libs
+  INSTALL_COMMAND ${SQLITE_MURMUR_MAKE} install_dev
   BUILD_BYPRODUCTS "${_openssl_install}/lib/libcrypto.a"
   LOG_CONFIGURE ON LOG_BUILD ON LOG_INSTALL ON
 )
-add_library(sqlite_express_crypto STATIC IMPORTED GLOBAL)
-set_target_properties(sqlite_express_crypto PROPERTIES
+add_library(sqlite_murmur_crypto STATIC IMPORTED GLOBAL)
+set_target_properties(sqlite_murmur_crypto PROPERTIES
   IMPORTED_LOCATION "${_openssl_install}/lib/libcrypto.a"
   INTERFACE_INCLUDE_DIRECTORIES "${_openssl_install}/include"
   INTERFACE_LINK_LIBRARIES "Threads::Threads;${CMAKE_DL_LIBS}")
-add_dependencies(sqlite_express_crypto sqlite_express_openssl_build)
+add_dependencies(sqlite_murmur_crypto sqlite_murmur_openssl_build)
 
-if(SQLITE_EXPRESS_ENABLE_AEGIS256)
+if(SQLITE_MURMUR_ENABLE_AEGIS256)
   add_subdirectory("${_vendor}/aegis" "${_vendor_build}/aegis" EXCLUDE_FROM_ALL)
   target_include_directories(aegis INTERFACE "$<BUILD_INTERFACE:${_vendor}/aegis/src/include>")
 endif()

@@ -79,9 +79,9 @@ def main():
         cases += [(["--ingest=log", f"--batch-size={batch}"], {"ingest": "log", "replication": "on", "connections": 2}) for batch in (1, 100)]
     else:
         run = subprocess.run([binary, "--replication=on"], capture_output=True, text=True, timeout=5)
-        assert run.returncode == 2 and "SQLITE_EXPRESS_ENABLE_MURMUR_EXT=ON" in run.stderr
+        assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_MURMUR_EXT=ON" in run.stderr
         run = subprocess.run([binary, "--ingest=log"], capture_output=True, text=True, timeout=5)
-        assert run.returncode == 2 and "SQLITE_EXPRESS_ENABLE_MURMUR_EXT=ON" in run.stderr
+        assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_MURMUR_EXT=ON" in run.stderr
     for args, expected in cases:
         run = subprocess.run([binary, "--seconds=0.01", f"--cipher={cipher}", *args],
                              capture_output=True, text=True, timeout=30)
@@ -89,7 +89,7 @@ def main():
         validate(run.stdout, 0.01, expected)
     if aegis != "ON":
         run = subprocess.run([binary, "--seconds=0.01"], capture_output=True, text=True, timeout=5)
-        assert run.returncode == 2 and "SQLITE_EXPRESS_ENABLE_AEGIS256=ON" in run.stderr
+        assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_AEGIS256=ON" in run.stderr
     invalid = ["--ingest=invalid", "--ingest=row", "--ingest=blob", "--background-threads=0", "--background-threads=257", "--background-threads=-1", "--background-threads=invalid","--replication=invalid","--seconds=0", "--seconds=-1", "--seconds=nan", "--seconds=inf", "--seconds=1junk",
                "--seconds=3601", "--unknown", "--flush-interval-ms=0", "--flush-interval-ms=4294967296",
                "--cache-pages=0", "--cache-pages=-1", "--cache-pages=18446744073709551616",

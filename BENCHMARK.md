@@ -1,13 +1,14 @@
-# SQLite Express benchmark results
+# SQLite Murmur benchmark results
 
-These measurements are **SQLite Express only**, with no comparisons to other database engines.
+These measurements are **SQLite Murmur only**, with no comparisons to other database engines.
 
-## Current 60-second mixed benchmark
+## 60-second mixed benchmark (former cr-sqlite backend)
 
-The current executable is `benchmark`: 80% random primary-key reads / 20% row
-writes, configurable rows per transaction. Local inserts use one connection;
-incoming ingestion adds a separate in-memory source connection. All library sources,
-including optional cr-sqlite, are vendored under `third-party/`.
+The executable is `benchmark`: 80% random primary-key reads / 20% row
+writes, configurable rows per transaction. The numbers below were measured
+with the former cr-sqlite replication backend, since replaced by the Murmur
+session extension; they are retained for comparison. Local inserts use one
+connection; incoming ingestion adds a separate source connection.
 
 Latest incoming-replication results (October 28, 2026), using 60 seconds of
 **destination-active time**, with source generation/export/packing excluded:
@@ -65,7 +66,7 @@ Run: https://github.com/marcgauthier/sqlite-express/actions/runs/40564652887
 | Mixed: 80% SELECT / 20% INSERT | 77,698 | 31,043 | 8,724 |
 
 **Environment:** GitHub Actions Ubuntu 24.04 runner, AMD EPYC 7763, 4 virtual CPUs,
-15 GiB RAM. One RocksDB-backed SQLite Express database shared across all
+15 GiB RAM. One RocksDB-backed SQLite Murmur database shared across all
 connections. The final database contained **512,000 rows**; reopen, count and
 `PRAGMA integrity_check` passed.
 
@@ -86,7 +87,7 @@ starts after worker setup. Throughput counts *successful* SQL operations;
 a failed or incomplete workload aborts the benchmark. The final RocksDB flush,
 verification query, and integrity check are **excluded** from timed throughput.
 
-SQLite Express deliberately acknowledges writes before the periodic background
+SQLite Murmur deliberately acknowledges writes before the periodic background
 storage flush. These are **SQL operation completion rates**, not durable
 write-through rates. Results on shared CI hosts vary, and these measurements
 are not a replacement for repeated long-duration benchmarks on dedicated
@@ -95,22 +96,21 @@ hardware.
 ## Reproduce the current benchmark
 
 See [build prerequisites](README.md#dependencies-and-build) and
-[optional cr-sqlite setup](README.md#optional-cr-sqlite-replication). Once the
-pinned Rust toolchain and libclang compiler tooling are installed, builds use
-vendored sources offline:
+[optional Murmur setup](README.md#optional-murmur-session-replication). Once a
+modern Rust toolchain is installed, builds use local sources offline:
 
 ```bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_ENABLE_CRSQLITE=ON
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_MURMUR_ENABLE_MURMUR_EXT=ON
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
 ./build/benchmark --replication=on --batch-size=1
 ./build/benchmark --replication=on --batch-size=100
 # Incoming replication; --seconds counts destination active time:
-./build/benchmark --ingest=blob --batch-size=100
-./build/benchmark --ingest=row --batch-size=100
+./build/benchmark --ingest=log --batch-size=1
+./build/benchmark --ingest=log --batch-size=100
 ```
 
-Use `--replication=off` for a baseline without CRR tracking. The historical CI
+Use `--replication=off` for a baseline without replication tracking. The historical CI
 matrix above used the previous `sqlite_express_bench` executable and different
 settings; its measurements are retained as history and are not directly comparable
 to the current local mixed workload. The current GitHub Actions workflow runs the

@@ -1,10 +1,10 @@
-#ifndef SQLITE_EXPRESS_MURMUR_EXT_H
-#define SQLITE_EXPRESS_MURMUR_EXT_H
+#ifndef SQLITE_MURMUR_EXT_H
+#define SQLITE_MURMUR_EXT_H
 #include <sqlite3.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
-/* Link sqlite_express::murmur_ext (SQLITE_EXPRESS_ENABLE_MURMUR_EXT=ON).
+/* Link sqlite_murmur::murmur_ext (SQLITE_MURMUR_ENABLE_MURMUR_EXT=ON).
  * Call once per connection after opening to register the murmur_* SQL
  * functions. Pass NULL for api; free any error with sqlite3_free().
  * Then SELECT murmur_open(spool) (a directory path), adopt tables with

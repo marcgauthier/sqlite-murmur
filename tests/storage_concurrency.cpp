@@ -1,6 +1,6 @@
 // Compile private scheduling hooks only into this test executable, not the library.
-#define SQLITE_EXPRESS_TEST_HOOKS 1
-#include "../src/sqlite_express.cpp"
+#define SQLITE_MURMUR_TEST_HOOKS 1
+#include "../src/sqlite_murmur.cpp"
 #include <future>
 #include <cstddef>
 #include <iostream>
@@ -17,7 +17,7 @@ struct Fixture {
     explicit Fixture(Cipher cipher, size_t capacity = 32, unsigned threads = 4, bool manual = true) : manualWorker(manual) {
         static std::atomic<unsigned> id{0};
         path = (std::filesystem::temp_directory_path() /
-            ("sqlite-express-private-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
+            ("sqlite-murmur-private-" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()) +
              "-" + std::to_string(++id))).string();
         config.cipher = cipher;
         config.interval = 60000;
@@ -520,7 +520,7 @@ void journalReuseTests() {
         std::vector<std::max_align_t> storage;
         sqlite3_file *file = nullptr;
         explicit Journal(const std::string &name, int extra = 0, bool main = true) {
-            storage.resize((sizeof(ExpressFile) + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
+            storage.resize((sizeof(MurmurFile) + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
             file = reinterpret_cast<sqlite3_file *>(storage.data());
             require(vfsOpen(nullptr, name.c_str(), file, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE |
                             (main ? SQLITE_OPEN_MAIN_JOURNAL : SQLITE_OPEN_TEMP_JOURNAL) | extra, nullptr) == SQLITE_OK,
@@ -603,7 +603,7 @@ void journalReuseTests() {
 int main() {
     try {
         std::vector<Cipher> ciphers{Cipher::AES256GCM};
-#ifdef SQLITE_EXPRESS_HAS_AEGIS256
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
         require(aegis_init() >= 0, "initialize AEGIS");
         ciphers.push_back(Cipher::AEGIS256);
 #endif

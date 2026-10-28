@@ -1,4 +1,4 @@
-#include "sqlite_express.h"
+#include "sqlite_murmur.h"
 
 #include <sqlite3.h>
 #include <atomic>
@@ -19,14 +19,14 @@ int main() {
     for (unsigned i = 0; i != 32; ++i) key[i] = static_cast<unsigned char>(42 + i);
     const auto id = std::chrono::steady_clock::now().time_since_epoch().count();
     const std::string path = (std::filesystem::temp_directory_path() /
-        ("sqlite-express-concurrent-" + std::to_string(id))).string();
-    sqlite_express_config opts{key, 25, 64, 1};
-    if (sqlite_express_register(&opts) != SQLITE_OK) return 1;
+        ("sqlite-murmur-concurrent-" + std::to_string(id))).string();
+    sqlite_murmur_config opts{key, 25, 64, 1};
+    if (sqlite_murmur_register(&opts) != SQLITE_OK) return 1;
     auto open = [&] {
         sqlite3 *db = nullptr;
         const int rc = sqlite3_open_v2(path.c_str(), &db,
             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
-            "sqlite-express");
+            "sqlite-murmur");
         if (rc != SQLITE_OK) {
             if (db) sqlite3_close(db);
             return static_cast<sqlite3 *>(nullptr);
@@ -67,8 +67,8 @@ int main() {
             !execute(mainDb, "PRAGMA rocksdb_write_buffer_size=1048576") ||
             !execute(mainDb, "PRAGMA rocksdb_max_write_buffer_number=3") ||
             !execute(mainDb, "PRAGMA rocksdb_max_background_jobs=3")) ++failures;
-        sqlite_express_stats snapshot{};
-        if (sqlite_express_get_stats(path.c_str(), &snapshot) != SQLITE_OK) ++failures;
+        sqlite_murmur_stats snapshot{};
+        if (sqlite_murmur_get_stats(path.c_str(), &snapshot) != SQLITE_OK) ++failures;
     }
     for (auto &t : workers) t.join();
     if (failures != 0) {
@@ -84,7 +84,7 @@ int main() {
         std::cerr << "parallel writes lost: " << count << '\n';
         return 1;
     }
-    if (sqlite_express_flush(path.c_str()) != SQLITE_OK) return 1;
+    if (sqlite_murmur_flush(path.c_str()) != SQLITE_OK) return 1;
     sqlite3_close(mainDb);
     mainDb = open();
     if (!mainDb) return 1;
@@ -94,7 +94,7 @@ int main() {
     count = sqlite3_step(stmt) == SQLITE_ROW ? sqlite3_column_int(stmt, 0) : -1;
     sqlite3_finalize(stmt);
     sqlite3_close(mainDb);
-    if (sqlite_express_unregister() != SQLITE_OK) return 1;
+    if (sqlite_murmur_unregister() != SQLITE_OK) return 1;
     std::filesystem::remove_all(path);
     if (count != kThreads * kInserts) {
         std::cerr << "reopened writes lost: " << count << '\n';

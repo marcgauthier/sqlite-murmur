@@ -1,5 +1,5 @@
 // One configurable run: 80% destination reads and 20% local or replicated row writes.
-#include "sqlite_express.h"
+#include "sqlite_murmur.h"
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -13,11 +13,11 @@
 #include <system_error>
 #include <vector>
 
-#ifdef SQLITE_EXPRESS_HAS_MURMUR_EXT
-#include "sqlite_express_murmur_ext.h"
+#ifdef SQLITE_MURMUR_HAS_MURMUR_EXT
+#include "sqlite_murmur_ext.h"
 #endif
-#ifndef SQLITE_EXPRESS_MURMUR_EXT_VERSION
-#define SQLITE_EXPRESS_MURMUR_EXT_VERSION "unavailable"
+#ifndef SQLITE_MURMUR_EXT_VERSION
+#define SQLITE_MURMUR_EXT_VERSION "unavailable"
 #endif
 namespace {
 using Clock = std::chrono::steady_clock;
@@ -25,7 +25,7 @@ struct CloseDatabase {
     bool replication = false;
     void operator()(sqlite3 *db) const {
         if (replication) {
-#ifdef SQLITE_EXPRESS_HAS_MURMUR_EXT
+#ifdef SQLITE_MURMUR_HAS_MURMUR_EXT
             sqlite3_exec(db, "SELECT murmur_close()", nullptr, nullptr, nullptr);
 #endif
         }
@@ -43,7 +43,7 @@ std::string quote(const std::string &text) {
 }
 void enableMurmur(Database &db, const std::string &spool, bool enabled) {
     if (!enabled) return;
-#ifdef SQLITE_EXPRESS_HAS_MURMUR_EXT
+#ifdef SQLITE_MURMUR_HAS_MURMUR_EXT
     char *error = nullptr;
     int rc = sqlite3_murmur_ext_init(db.get(), &error, nullptr);
     std::string message = error ? error : sqlite3_errmsg(db.get());
@@ -58,17 +58,17 @@ void enableMurmur(Database &db, const std::string &spool, bool enabled) {
     db.get_deleter().replication = true;
 #else
     (void)spool;
-    throw std::runtime_error("replication requires SQLITE_EXPRESS_ENABLE_MURMUR_EXT=ON");
+    throw std::runtime_error("replication requires SQLITE_MURMUR_ENABLE_MURMUR_EXT=ON");
 #endif
 }
 constexpr uint64_t kSeedRows = 50000;
-constexpr char kPayload[] = "sqlite-express-benchmark-payload-abcdefghijklmnopqrstuvwxyz-0123456789";
+constexpr char kPayload[] = "sqlite-murmur-benchmark-payload-abcdefghijklmnopqrstuvwxyz-0123456789";
 
 void check(int rc, sqlite3 *db, const char *operation) {
     if (rc != SQLITE_OK)
         throw std::runtime_error(std::string(operation) + ": " + (db ? sqlite3_errmsg(db) : sqlite3_errstr(rc)));
 }
-Database open(const std::string &path, unsigned sqliteCacheKiB, const char *vfs = "sqlite-express") {
+Database open(const std::string &path, unsigned sqliteCacheKiB, const char *vfs = "sqlite-murmur") {
     sqlite3 *raw = nullptr;
     const int rc = sqlite3_open_v2(path.c_str(), &raw,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, vfs);
@@ -242,11 +242,11 @@ int main(int argc, char **argv) {
             } else throw std::runtime_error("unknown argument: " + arg);
         }
         if (ingest != "local") replication = true;
-#ifndef SQLITE_EXPRESS_HAS_MURMUR_EXT
-        if (replication) throw std::runtime_error("replication requires SQLITE_EXPRESS_ENABLE_MURMUR_EXT=ON");
+#ifndef SQLITE_MURMUR_HAS_MURMUR_EXT
+        if (replication) throw std::runtime_error("replication requires SQLITE_MURMUR_ENABLE_MURMUR_EXT=ON");
 #endif
-#ifndef SQLITE_EXPRESS_HAS_AEGIS256
-        if (cipher == "aegis256") throw std::runtime_error("aegis256 requires SQLITE_EXPRESS_ENABLE_AEGIS256=ON; use --cipher=aes256gcm for AES only");
+#ifndef SQLITE_MURMUR_HAS_AEGIS256
+        if (cipher == "aegis256") throw std::runtime_error("aegis256 requires SQLITE_MURMUR_ENABLE_AEGIS256=ON; use --cipher=aes256gcm for AES only");
 #endif
     } catch (const std::exception &error) {
         std::cerr << "BENCH_ERROR," << error.what() << '\n';
@@ -254,7 +254,7 @@ int main(int argc, char **argv) {
     }
 
     const std::string path = (std::filesystem::temp_directory_path() /
-        ("sqlite-express-benchmark-" + std::to_string(Clock::now().time_since_epoch().count()))).string();
+        ("sqlite-murmur-benchmark-" + std::to_string(Clock::now().time_since_epoch().count()))).string();
     const std::string spool = path + ".spool";
     const std::string sourcePath = path + ".source.db";
     const std::string sourceSpool = path + ".source.spool";
@@ -270,15 +270,15 @@ int main(int argc, char **argv) {
     try {
         unsigned char key[32];
         for (int i = 0; i < 32; ++i) key[i] = static_cast<unsigned char>(i + 11);
-        sqlite_express_config config{key, flushInterval, cachePages, 1};
-        check(sqlite_express_register(&config), nullptr, "register VFS");
+        sqlite_murmur_config config{key, flushInterval, cachePages, 1};
+        check(sqlite_murmur_register(&config), nullptr, "register VFS");
         uint64_t writes = 0;
         uint64_t transactions = 0;
         uint64_t rocksdbCacheBytes = 0;
         uint64_t trackedChanges = 0;
         double seconds = 0, persistenceSeconds = 0, transactionSeconds = 0, wallSeconds = 0, sourceSeconds = 0;
         uint64_t packedBytes = 0, appliedChanges = 0, spoolBytes = 0;
-        sqlite_express_stats stats{};
+        sqlite_murmur_stats stats{};
         {
             auto db = open(path, sqliteCacheKiB);
             const std::string pragmas = "PRAGMA page_size=" + std::to_string(pageSize) +
@@ -303,7 +303,7 @@ int main(int argc, char **argv) {
             if (replication) exec(db.get(), "SELECT murmur_collect()");
             exec(db.get(), "COMMIT");
             if (replication) exec(db.get(), "SELECT murmur_drain()");
-            check(sqlite_express_checkpoint(path.c_str()), db.get(), "persist seed data");
+            check(sqlite_murmur_checkpoint(path.c_str()), db.get(), "persist seed data");
             Database source(nullptr);
             std::string sourceOrigin;
             if (ingest != "local") {
@@ -328,7 +328,7 @@ int main(int argc, char **argv) {
                       << ",compression=" << compression << ",zstd_level=" << compressionLevel
                       << ",background_threads=" << backgroundThreads
                       << ",replication=" << (replication ? "on" : "off")
-                      << ",murmur_version=" << (replication ? SQLITE_EXPRESS_MURMUR_EXT_VERSION : "none")
+                      << ",murmur_version=" << (replication ? SQLITE_MURMUR_EXT_VERSION : "none")
                       << ",ingest=" << ingest << ",timing=" << (ingest == "local" ? "wall" : "destination_active")
                       << ",connections=" << (source ? 2 : 1) << ",source_storage=" << (source ? "file" : "none")
                       << ",rocksdb_sync=1,batch_size=" << batchSize << ",seed_rows=" << kSeedRows
@@ -425,7 +425,7 @@ int main(int argc, char **argv) {
             }
             const auto stop = Clock::now();
             wallSeconds = std::chrono::duration<double>(stop - start).count();
-            check(sqlite_express_checkpoint(path.c_str()), db.get(), "final persistence");
+            check(sqlite_murmur_checkpoint(path.c_str()), db.get(), "final persistence");
             persistenceSeconds = std::chrono::duration<double>(Clock::now() - stop).count();
             if (replication) {
                 if (ingest == "local") {
@@ -439,12 +439,12 @@ int main(int argc, char **argv) {
                 }
                 if (trackedChanges != writes) throw std::runtime_error("timed replication change count mismatch");
             }
-            check(sqlite_express_get_stats(path.c_str(), &stats), db.get(), "read storage statistics");
+            check(sqlite_murmur_get_stats(path.c_str(), &stats), db.get(), "read storage statistics");
         }
         uint64_t diskBytes = treeBytes(path);
         spoolBytes = treeBytes(spool);
         verify(path, spool, kSeedRows + writes, sqliteCacheKiB, replication, ingest == "local");
-        check(sqlite_express_unregister(), nullptr, "unregister VFS");
+        check(sqlite_murmur_unregister(), nullptr, "unregister VFS");
         cleanup();
         const uint64_t operations = writes * 5;
         const double savings = stats.uncompressed_bytes ?
@@ -480,7 +480,7 @@ int main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "BENCH_ERROR," << error.what() << ",database=" << path << std::endl;
-        (void)sqlite_express_unregister();
+        (void)sqlite_murmur_unregister();
         cleanup();
         return 1;
     }
