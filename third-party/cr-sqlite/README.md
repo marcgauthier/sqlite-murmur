@@ -16,7 +16,7 @@ Example applications using cr-sqlite to sync state.
 - Vite starter - [Example](https://vite-starter2.fly.dev/) | [Repository](https://github.com/vlcn-io/vite-starter)
 - TodoMVC - [Example](https://vlcn-live-examples.fly.dev/) | [Repository](https://github.com/vlcn-io/live-examples)
 - [Svelte Store](https://github.com/Azarattum/CRStore)
-- [Tutorials](https://vlcn.io/docs/networking/whole-crr-sync)
+- [Tutorials](https://vlcn.io/docs/cr-sqlite/networking/whole-crr-sync)
 - [WIP Local-First Presentation Editor](https://github.com/tantaman/strut)
 - Basic setup & sync via an [Observable Notebook](https://observablehq.com/@tantaman/cr-sqlite-basic-setup)
 
@@ -232,13 +232,13 @@ This is much more akin to git and event sourcing but with the drawback being tha
 
 # Building
 
-For a table version, build against a [release tag](https://github.com/vlcn-io/cr-sqlite/releases) as main may not be 100% stable.
+For a stable version, build against a [release tag](https://github.com/vlcn-io/cr-sqlite/releases) as main may not be 100% stable.
 
 You'll need to install Rust.
 
 - Installing Rust: https://www.rust-lang.org/tools/install
 
-## [Run Time Loadable Extension](https://www.sqlite.org/loadext.htmla)
+## [Run Time Loadable Extension](https://www.sqlite.org/loadext.html)
 
 Instructions on building a native library that can be loaded into SQLite in non-wasm environments.
 

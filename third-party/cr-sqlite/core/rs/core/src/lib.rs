@@ -6,6 +6,7 @@
 mod alter;
 mod automigrate;
 mod backfill;
+mod bulk_ingest;
 #[cfg(feature = "test")]
 pub mod bootstrap;
 #[cfg(not(feature = "test"))]
@@ -217,6 +218,12 @@ pub extern "C" fn sqlite3_crsqlcore_init(
         // no need to free the site id buffer here, this is cleaned up already.
         return null_mut();
     }
+    // Share the sync bit with merge code so it can set/clear the bit
+    // directly rather than stepping SQL statements per merged row.
+    // The integer stays owned by the function registration above.
+    unsafe {
+        (*ext_data).syncBit = sync_bit_ptr;
+    }
 
     let rc = db
         .create_function_v2(
@@ -259,6 +266,57 @@ pub extern "C" fn sqlite3_crsqlcore_init(
             sqlite::UTF8 | sqlite::INNOCUOUS,
             Some(ext_data as *mut c_void),
             Some(x_crsql_next_db_version),
+            None,
+            None,
+            None,
+        )
+        .unwrap_or(ResultCode::ERROR);
+    if rc != ResultCode::OK {
+        unsafe { crsql_freeExtData(ext_data) };
+        return null_mut();
+    }
+
+    let rc = db
+        .create_function_v2(
+            "crsql_ingest_begin",
+            0,
+            sqlite::UTF8 | sqlite::INNOCUOUS,
+            None,
+            Some(bulk_ingest::x_crsql_ingest_begin),
+            None,
+            None,
+            None,
+        )
+        .unwrap_or(ResultCode::ERROR);
+    if rc != ResultCode::OK {
+        unsafe { crsql_freeExtData(ext_data) };
+        return null_mut();
+    }
+
+    let rc = db
+        .create_function_v2(
+            "crsql_ingest_commit",
+            0,
+            sqlite::UTF8 | sqlite::INNOCUOUS,
+            Some(ext_data as *mut c_void),
+            Some(bulk_ingest::x_crsql_ingest_commit),
+            None,
+            None,
+            None,
+        )
+        .unwrap_or(ResultCode::ERROR);
+    if rc != ResultCode::OK {
+        unsafe { crsql_freeExtData(ext_data) };
+        return null_mut();
+    }
+
+    let rc = db
+        .create_function_v2(
+            "crsql_ingest_blob",
+            1,
+            sqlite::UTF8 | sqlite::INNOCUOUS,
+            Some(ext_data as *mut c_void),
+            Some(bulk_ingest::x_crsql_ingest_blob),
             None,
             None,
             None,
@@ -557,7 +615,7 @@ unsafe extern "C" fn x_crsql_as_crr(
     let (schema_name, table_name) = if argc == 2 {
         (args[0].text(), args[1].text())
     } else {
-        ("main", args[0].text())
+        ("main\0", args[0].text())
     };
 
     let db = ctx.db_handle();

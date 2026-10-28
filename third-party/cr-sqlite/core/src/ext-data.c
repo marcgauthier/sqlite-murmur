@@ -22,12 +22,6 @@ crsql_ExtData *crsql_newExtData(sqlite3 *db, unsigned char *siteIdBuffer) {
   rc += sqlite3_prepare_v3(db, "PRAGMA data_version", -1,
                            SQLITE_PREPARE_PERSISTENT,
                            &(pExtData->pPragmaDataVersionStmt), 0);
-  pExtData->pSetSyncBitStmt = 0;
-  rc += sqlite3_prepare_v3(db, SET_SYNC_BIT, -1, SQLITE_PREPARE_PERSISTENT,
-                           &(pExtData->pSetSyncBitStmt), 0);
-  pExtData->pClearSyncBitStmt = 0;
-  rc += sqlite3_prepare_v3(db, CLEAR_SYNC_BIT, -1, SQLITE_PREPARE_PERSISTENT,
-                           &(pExtData->pClearSyncBitStmt), 0);
 
   pExtData->pSetSiteIdOrdinalStmt = 0;
   rc += sqlite3_prepare_v3(
@@ -54,6 +48,14 @@ crsql_ExtData *crsql_newExtData(sqlite3 *db, unsigned char *siteIdBuffer) {
   pExtData->tableInfos = 0;
   pExtData->rowsImpacted = 0;
   pExtData->updatedTableInfosThisTx = 0;
+  // syncBit is set by the rust bundle init right after this returns.
+  pExtData->syncBit = 0;
+  pExtData->lastSiteIdOrdinal = 0;
+  memset(pExtData->lastSiteId, 0, sizeof(pExtData->lastSiteId));
+  pExtData->lastSiteIdLen = 0;
+  pExtData->lastSiteIdOrdinalValid = 0;
+  pExtData->insertedSiteIdThisTx = 0;
+  pExtData->dbVersionCheckedForWrite = 0;
   crsql_init_table_info_vec(pExtData);
 
   sqlite3_stmt *pStmt;
@@ -105,8 +107,6 @@ void crsql_freeExtData(crsql_ExtData *pExtData) {
   sqlite3_finalize(pExtData->pDbVersionStmt);
   sqlite3_finalize(pExtData->pPragmaSchemaVersionStmt);
   sqlite3_finalize(pExtData->pPragmaDataVersionStmt);
-  sqlite3_finalize(pExtData->pSetSyncBitStmt);
-  sqlite3_finalize(pExtData->pClearSyncBitStmt);
   sqlite3_finalize(pExtData->pSetSiteIdOrdinalStmt);
   sqlite3_finalize(pExtData->pSelectSiteIdOrdinalStmt);
   sqlite3_finalize(pExtData->pSelectClockTablesStmt);
@@ -124,8 +124,6 @@ void crsql_finalize(crsql_ExtData *pExtData) {
   sqlite3_finalize(pExtData->pDbVersionStmt);
   sqlite3_finalize(pExtData->pPragmaSchemaVersionStmt);
   sqlite3_finalize(pExtData->pPragmaDataVersionStmt);
-  sqlite3_finalize(pExtData->pSetSyncBitStmt);
-  sqlite3_finalize(pExtData->pClearSyncBitStmt);
   sqlite3_finalize(pExtData->pSetSiteIdOrdinalStmt);
   sqlite3_finalize(pExtData->pSelectSiteIdOrdinalStmt);
   sqlite3_finalize(pExtData->pSelectClockTablesStmt);
@@ -133,8 +131,6 @@ void crsql_finalize(crsql_ExtData *pExtData) {
   pExtData->pDbVersionStmt = 0;
   pExtData->pPragmaSchemaVersionStmt = 0;
   pExtData->pPragmaDataVersionStmt = 0;
-  pExtData->pSetSyncBitStmt = 0;
-  pExtData->pClearSyncBitStmt = 0;
   pExtData->pSetSiteIdOrdinalStmt = 0;
   pExtData->pSelectSiteIdOrdinalStmt = 0;
   pExtData->pSelectClockTablesStmt = 0;

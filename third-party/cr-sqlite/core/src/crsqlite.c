@@ -39,6 +39,15 @@ static int commitHook(void *pUserData) {
   pExtData->pendingDbVersion = -1;
   pExtData->seq = 0;
   pExtData->updatedTableInfosThisTx = 0;
+  pExtData->dbVersionCheckedForWrite = 0;
+  pExtData->lastSiteIdOrdinalValid = 0;
+  pExtData->insertedSiteIdThisTx = 0;
+  // Bulk ingest never writes through the changes vtab so its xCommit never
+  // fires; reset here so post-commit rows_impacted matches row-by-row (0).
+  // Row-by-row already reset via xCommit, so this is a no-op for it.
+  // Rollback intentionally untouched: legacy xRollback is NULL and the
+  // stale count survives rollbacks there too.
+  pExtData->rowsImpacted = 0;
   return SQLITE_OK;
 }
 
@@ -48,6 +57,9 @@ static void rollbackHook(void *pUserData) {
   pExtData->pendingDbVersion = -1;
   pExtData->seq = 0;
   pExtData->updatedTableInfosThisTx = 0;
+  pExtData->dbVersionCheckedForWrite = 0;
+  pExtData->lastSiteIdOrdinalValid = 0;
+  pExtData->insertedSiteIdThisTx = 0;
 }
 
 #ifdef LIBSQL

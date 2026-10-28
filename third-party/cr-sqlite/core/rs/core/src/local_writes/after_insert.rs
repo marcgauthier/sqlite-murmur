@@ -39,7 +39,7 @@ fn after_insert(
     tbl_info: &TableInfo,
     pks_new: &[*mut value],
 ) -> Result<ResultCode, String> {
-    let db_version = crate::db_version::next_db_version(db, ext_data, None)?;
+    let db_version = crate::db_version::next_db_version_for_write(db, ext_data, None)?;
     let (create_record_existed, key_new) = tbl_info
         .get_or_create_key_for_insert(db, pks_new)
         .or_else(|_| Err("failed geteting or creating lookaside key"))?;

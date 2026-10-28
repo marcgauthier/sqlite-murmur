@@ -4,6 +4,7 @@ import csv
 import math
 import subprocess
 import sys
+from pathlib import Path
 
 
 def validate(output, duration, expected=None):
@@ -36,6 +37,13 @@ def validate(output, duration, expected=None):
     if config["compression"] == "none":
         assert float(row["compression_savings_pct"]) == 0
     assert int(row["tracked_changes"]) == (writes if config["replication"] == "on" else 0)
+    assert math.isclose(float(row["wall_ops_per_second_including_persistence"]), operations / (float(row["wall_seconds"]) + float(row["persistence_seconds"])), rel_tol=0.001)
+    assert float(row["wall_seconds"]) >= seconds - 0.000002
+    if config["ingest"] != "local":
+        assert int(row["applied_changes"]) == writes
+        assert int(row["packed_bytes"]) > writes
+        assert float(row["source_prepare_seconds"]) > 0
+        assert config["timing"] == "destination_active"
     assert lines[-1] == "BENCH_DONE"
     return row
 
@@ -44,7 +52,7 @@ def main():
     binary, aegis, crsqlite = sys.argv[1:]
     cipher = "aegis256" if aegis == "ON" else "aes256gcm"
     defaults = {"cipher": cipher, "flush_interval_ms": 100, "cache_pages": 16384, "sqlite_cache_size": -1048576,
-                "replication": "off", "compression": "zstd3", "zstd_level": 3, "page_size": 4096, "connections": 1, "batch_size": 1, "rocksdb_cache_bytes": 33554432}
+                "replication": "off", "crsqlite_version": "none", "compression": "zstd3", "zstd_level": 3, "page_size": 4096, "connections": 1, "batch_size": 1, "rocksdb_cache_bytes": 33554432}
     cases = [([], defaults),
              (["--flush-interval-ms=250", "--cache-pages=32", "--sqlite-cache-kib=0", "--compression=none", "--cipher=aes256gcm", "--page-size=8192"],
               {"cipher": "aes256gcm", "flush_interval_ms": 250, "cache_pages": 32, "sqlite_cache_size": 0,
@@ -53,10 +61,15 @@ def main():
              (["--batch-size=100"], {"batch_size": 100})]
     cases += [([f"--background-threads={threads}"], {"background_threads": threads}) for threads in (1, 4, 8, 16)]
     if crsqlite == "ON":
-        cases += [(["--replication=on", f"--batch-size={batch}"], {"replication": "on", "batch_size": batch}) for batch in (1, 100)]
+        revision = (Path(__file__).resolve().parents[1] / "third-party/cr-sqlite/sqlite-murmur-revision.txt").read_text().strip()
+        cases += [(["--replication=on", f"--batch-size={batch}"], {"replication": "on", "crsqlite_version": revision, "batch_size": batch}) for batch in (1, 100)]
+        cases += [([f"--ingest={mode}", f"--batch-size={batch}"], {"ingest": mode, "replication": "on", "connections": 2}) for mode in ("row", "blob") for batch in (1, 100)]
     else:
         run = subprocess.run([binary, "--replication=on"], capture_output=True, text=True, timeout=5)
-        assert run.returncode == 2 and "SQLITE_EXPRESS_ENABLE_CRSQLITE=ON" in run.stderr
+        assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_CRSQLITE=ON" in run.stderr
+        for mode in ("row", "blob"):
+            run = subprocess.run([binary, f"--ingest={mode}"], capture_output=True, text=True, timeout=5)
+            assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_CRSQLITE=ON" in run.stderr
     for args, expected in cases:
         run = subprocess.run([binary, "--seconds=0.01", f"--cipher={cipher}", *args],
                              capture_output=True, text=True, timeout=30)
@@ -64,8 +77,8 @@ def main():
         validate(run.stdout, 0.01, expected)
     if aegis != "ON":
         run = subprocess.run([binary, "--seconds=0.01"], capture_output=True, text=True, timeout=5)
-        assert run.returncode == 2 and "SQLITE_EXPRESS_ENABLE_AEGIS256=ON" in run.stderr
-    invalid = ["--background-threads=0", "--background-threads=257", "--background-threads=-1", "--background-threads=invalid","--replication=invalid","--seconds=0", "--seconds=-1", "--seconds=nan", "--seconds=inf", "--seconds=1junk",
+        assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_AEGIS256=ON" in run.stderr
+    invalid = ["--ingest=invalid","--background-threads=0", "--background-threads=257", "--background-threads=-1", "--background-threads=invalid","--replication=invalid","--seconds=0", "--seconds=-1", "--seconds=nan", "--seconds=inf", "--seconds=1junk",
                "--seconds=3601", "--unknown", "--flush-interval-ms=0", "--flush-interval-ms=4294967296",
                "--cache-pages=0", "--cache-pages=-1", "--cache-pages=18446744073709551616",
                "--page-size=4097", "--page-size=256", "--cipher=unknown", "--compression=zstd0",

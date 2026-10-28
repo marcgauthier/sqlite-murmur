@@ -1,4 +1,4 @@
-name: SQLite Express benchmark
+name: SQLite Murmur benchmark
 
 on:
   workflow_dispatch:
@@ -22,9 +22,11 @@ jobs:
       - name: Install build tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake g++ make perl python3 libclang-dev
-      - name: Install cr-sqlite compiler toolchain
-        run: rustup toolchain install nightly-2023-10-05 --profile minimal
+          sudo apt-get install -y cmake g++ make perl python3 libclang-dev openssl pkg-config binutils
+      - name: Install Rust toolchains
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup toolchain install nightly-2023-10-05 --profile minimal
       - name: Verify vendored sources
         run: python3 third-party/verify.py
       - name: System information
@@ -32,7 +34,7 @@ jobs:
           lscpu | grep -E 'Model name:|CPU\(s\):|Thread\(s\) per core:|Core\(s\) per socket:'
           free -h
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_BUILD_BENCHMARKS=ON -DSQLITE_EXPRESS_ENABLE_CRSQLITE=ON
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
       - name: Build from vendored sources
         run: cmake --build build --parallel 2
       - name: Tests
@@ -57,6 +59,6 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: sqlite-express-benchmark-results
+          name: sqlite-murmur-benchmark-results
           path: benchmark-results.txt
           if-no-files-found: ignore

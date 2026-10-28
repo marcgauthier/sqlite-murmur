@@ -1,0 +1,19 @@
+BENCH_CONFIG,cipher=aegis256,flush_interval_ms=100,page_size=4096,sqlite_cache_size=-1048576,sqlite_cache_bytes=1073741824,vfs_block_size=4096,cache_pages=16384,cache_bytes=67108864,rocksdb_cache_bytes=33554432,compression=zstd3,zstd_level=3,background_threads=4,replication=on,crsqlite_version=cr-sqlite-2-43ab94ca-fb39cc559120,ingest=row,timing=destination_active,connections=2,source_storage=memory,rocksdb_sync=1,batch_size=100,seed_rows=50000,payload_bytes=70,target_seconds=60
+BENCH_HEADER,seconds,reads,writes,operations,ops_per_second,read_ops_per_second,write_ops_per_second,persistence_seconds,ops_per_second_including_persistence,logical_database_bytes,rocksdb_files_bytes,zstd_level,compression_savings_pct,transactions,mean_write_transaction_ms,tracked_changes,wall_seconds,source_prepare_seconds,packed_bytes,applied_changes,wall_ops_per_second_including_persistence
+BENCH_CSV,60.002419,12434000,3108500,15542500,259031.221487,207224.977190,51806.244297,0.388964,257362.873433,468561920,99879631,3,77.689662,31085,1.198742,3108500,112.049383,48.156494,482174985,3108500,138231.309639
+
+80% reads / 20% destination row writes, 100 inserts/transaction, aegis256, 100 ms flush, 4096 byte SQLite pages
+VFS cache: 16384 x 4096 byte blocks (64.00 MiB target plus overhead)
+SQLite cache_size: -1048576 (1024.00 MiB target)
+RocksDB cache: 32.00 MiB
+Background compression/encryption workers: 4
+Replication change tracking: row incoming apply, tracked timed inserts: 3108500
+Duration: 60.00 measured seconds; 112.05 wall seconds; source preparation 48.16 seconds
+Operations: 15542500 (12434000 reads, 3108500 writes)
+Operations/second: 259031.22
+Write transactions: 31085, mean duration: 1.20 ms (incoming apply plus commit; reads excluded)
+Final persistence: 0.39 seconds
+SQLite logical size: 468561920 bytes (446.86 MiB)
+RocksDB file size: 99879631 bytes (95.25 MiB)
+Compression: zstd3, 77.69% payload savings across persisted blocks (includes seeding)
+BENCH_DONE

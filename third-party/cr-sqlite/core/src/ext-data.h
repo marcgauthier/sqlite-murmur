@@ -37,13 +37,32 @@ struct crsql_ExtData {
 
   int seq;
 
-  sqlite3_stmt *pSetSyncBitStmt;
-  sqlite3_stmt *pClearSyncBitStmt;
   sqlite3_stmt *pSetSiteIdOrdinalStmt;
   sqlite3_stmt *pSelectSiteIdOrdinalStmt;
   sqlite3_stmt *pSelectClockTablesStmt;
 
   int mergeEqualValues;
+
+  // Non-owning pointer to the sync bit integer owned by the
+  // `crsql_internal_sync_bit` function registration (see lib.rs).
+  // Merge code sets/clears the bit directly instead of stepping
+  // `SELECT crsql_internal_sync_bit(?)` statements per row.
+  int *syncBit;
+
+  // Last-value cache for crsql_site_id ordinal lookups.
+  // Valid only within the current transaction (cleared on commit/rollback)
+  // and only while this tx inserted no site ids (see insertedSiteIdThisTx).
+  sqlite3_int64 lastSiteIdOrdinal;
+  unsigned char lastSiteId[16];
+  int lastSiteIdLen;
+  int lastSiteIdOrdinalValid;
+  int insertedSiteIdThisTx;
+
+  // Set once the PRAGMA data_version check ran in the current write tx.
+  // Internal write paths (triggers, merges) always hold the write lock,
+  // so no external commit can interleave after the first check.
+  // Cleared on commit/rollback. Read paths never set this.
+  int dbVersionCheckedForWrite;
 };
 
 crsql_ExtData *crsql_newExtData(sqlite3 *db, unsigned char *siteIdBuffer);

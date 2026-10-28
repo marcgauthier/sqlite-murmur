@@ -7,16 +7,24 @@ on:
 jobs:
   linux:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install dependencies
+      - name: Install build tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake g++ libsqlite3-dev librocksdb-dev libzstd-dev libssl-dev
-      - name: Configure
+          sudo apt-get install -y cmake g++ make perl python3 libclang-dev openssl pkg-config binutils
+      - name: Install Rust toolchains
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup toolchain install nightly-2023-10-05 --profile minimal
+      - name: Verify vendored sources
+        run: python3 third-party/verify.py
+      - name: Configure the default static package
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build
+      - name: Build from vendored sources
         run: cmake --build build --parallel 2
       - name: Test
         run: ctest --test-dir build --output-on-failure
+      - name: Verify the installed application package
+        run: python3 tests/consumer_smoke.py build cmake

@@ -5,8 +5,9 @@ CC:=$(CI_GCC)
 endif
 
 # SHARED_CFLAGS=-DLIBSQL=1
-LOADABLE_CFLAGS=-std=c99 -fPIC -shared -Wall $(SHARED_CFLAGS)
-STATIC_CFLAGS=-std=c99 -fPIC -c -Wall $(SHARED_CFLAGS)
+PIC_CFLAG=-fPIC
+LOADABLE_CFLAGS=-std=c99 $(PIC_CFLAG) $(APPLE_LDFLAGS) -shared -Wall $(SHARED_CFLAGS)
+STATIC_CFLAGS=-std=c99 $(PIC_CFLAG) -c -Wall $(SHARED_CFLAGS)
 # libsql_feature=,libsql
 
 ifeq ($(shell uname -s),Darwin)
@@ -19,6 +20,9 @@ endif
 
 ifdef CONFIG_DARWIN
 LOADABLE_EXTENSION=dylib
+# Consumers that relocate the dylib rewrite its install name, which needs spare
+# room in the header. install_name_tool fails on long paths without this.
+APPLE_LDFLAGS=-headerpad_max_install_names
 # apparently `darwin-x86_64` also works on arm macs and is the proper host arch for ndk builds.
 NDK_HOSTARCH=darwin-x86_64
 endif
@@ -42,6 +46,12 @@ C_TARGET=
 LOADABLE_EXTENSION=dll
 rs_build_flags = -Zbuild-std
 endif
+ifeq ($(CI_MAYBE_TARGET),aarch64-pc-windows-msvc)
+C_TARGET=--target=aarch64-pc-windows-msvc
+LOADABLE_EXTENSION=dll
+# Windows code is always position independent, clang rejects -fPIC there.
+PIC_CFLAG=
+endif
 
 ifdef IOS_TARGET
 CI_MAYBE_TARGET=$(IOS_TARGET)
@@ -59,6 +69,8 @@ endif
 ifdef ANDROID_TARGET
 CI_MAYBE_TARGET=$(ANDROID_TARGET)
 NDK=$(ANDROID_NDK_HOME)
+# Building for android from a mac host, the linker is the NDK's, not Apple's.
+APPLE_LDFLAGS=
 LOADABLE_EXTENSION=so
 CC=$(NDK)/toolchains/llvm/prebuilt/$(NDK_HOSTARCH)/bin/clang
 rs_ndk=ndk -t $(ANDROID_TARGET)
@@ -161,6 +173,14 @@ ifdef CI_MAYBE_TARGET
 			C_TARGET = --target=$(CI_MAYBE_TARGET)ulator
 		endif
 	endif
+endif
+
+# MSVC targets emit crsql_<bundle>.lib rather than libcrsql_<bundle>.a
+ifeq ($(findstring windows-msvc,$(CI_MAYBE_TARGET)),windows-msvc)
+	rs_lib_static = ./rs/$(bundle)/target/$(CI_MAYBE_TARGET)/release/crsql_$(bundle).lib
+	rs_lib_static_cpy = ./dist/crsql_$(bundle)-static.lib
+	rs_lib_loadable = ./rs/$(bundle)/target/$(CI_MAYBE_TARGET)/release/crsql_$(bundle).lib
+	rs_lib_loadable_cpy = ./dist/crsql_$(bundle)-loadable.lib
 endif
 
 $(shell.c):

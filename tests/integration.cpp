@@ -1,4 +1,4 @@
-#include "sqlite_express.h"
+#include "sqlite_murmur.h"
 
 #include <sqlite3.h>
 #include <rocksdb/db.h>
@@ -42,7 +42,7 @@ static void alignedWriteTests(const std::string &path, const std::string &cipher
         std::vector<std::max_align_t> storage;
         sqlite3_file *file = nullptr;
         explicit RawFile(const std::string &filename) {
-            auto *vfs = sqlite3_vfs_find("sqlite-express");
+            auto *vfs = sqlite3_vfs_find("sqlite-murmur");
             require(vfs != nullptr, "find VFS");
             storage.resize((vfs->szOsFile + sizeof(std::max_align_t) - 1) / sizeof(std::max_align_t));
             auto *candidate = reinterpret_cast<sqlite3_file *>(storage.data());
@@ -64,7 +64,7 @@ static void alignedWriteTests(const std::string &path, const std::string &cipher
         void commit(const std::string &filename) {
             require(file->pMethods->xFileControl(file, SQLITE_FCNTL_COMMIT_PHASETWO, nullptr) == SQLITE_OK,
                     "complete raw transaction");
-            require(sqlite_express_flush(filename.c_str()) == SQLITE_OK, "persist raw transaction");
+            require(sqlite_murmur_flush(filename.c_str()) == SQLITE_OK, "persist raw transaction");
         }
     };
     std::string expected = std::string(blockSize, 'A') + std::string(2 * blockSize, 'B');
@@ -133,11 +133,11 @@ static std::string scalarText(sqlite3 *db, const char *query) {
     return result;
 }
 
-static sqlite3 *openExpress(const std::string &path) {
+static sqlite3 *openMurmur(const std::string &path) {
     sqlite3 *db = nullptr;
     int rc = sqlite3_open_v2(path.c_str(), &db,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
-        "sqlite-express");
+        "sqlite-murmur");
     if (rc != SQLITE_OK) {
         std::string msg = db ? sqlite3_errmsg(db) : "no SQLite handle";
         if (db) sqlite3_close(db);
@@ -147,7 +147,7 @@ static sqlite3 *openExpress(const std::string &path) {
 }
 
 static void sidecarAccessTests(const std::string &path) {
-    auto *vfs = sqlite3_vfs_find("sqlite-express");
+    auto *vfs = sqlite3_vfs_find("sqlite-murmur");
     require(vfs != nullptr, "find VFS for sidecar access checks");
     const auto access = [&](const std::string &name, int expected) {
         for (int flags : {SQLITE_ACCESS_EXISTS, SQLITE_ACCESS_READ, SQLITE_ACCESS_READWRITE}) {
@@ -156,7 +156,7 @@ static void sidecarAccessTests(const std::string &path) {
                     "VFS access result for " + name);
         }
     };
-    sqlite3 *db = openExpress(path);
+    sqlite3 *db = openMurmur(path);
     access(path, 1);
     access(path + "-missing", 0);
     // Real sidecar artifacts must not override this VFS's RAM journal/WAL state.
@@ -167,7 +167,7 @@ static void sidecarAccessTests(const std::string &path) {
     access(path + "-wal", 0);
     access(path + "-unowned-journal", 1);
     // Preserve main-file handling even when its name looks like another DB's sidecar.
-    sqlite3 *suffixDb = openExpress(path + "-wal");
+    sqlite3 *suffixDb = openMurmur(path + "-wal");
     access(path + "-wal", 1);
     require(sqlite3_close(suffixDb) == SQLITE_OK, "close suffix-named database");
     access(path + "-wal", 0);
@@ -195,7 +195,7 @@ static void reject(sqlite3 *db, const char *query) {
 static void rejectRead(const std::string &path) {
     sqlite3 *db = nullptr;
     const int rc = sqlite3_open_v2(path.c_str(), &db,
-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, "sqlite-express");
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_FULLMUTEX, "sqlite-murmur");
     if (rc == SQLITE_OK) reject(db, "SELECT count(*) FROM events");
     if (db) require(sqlite3_close(db) == SQLITE_OK, "close rejected read");
 }
@@ -208,9 +208,9 @@ static uint64_t persistedSequence(const std::string &path) {
 }
 
 static void statsTests(sqlite3 *db, const std::string &path, const std::string &cipher) {
-    require(sqlite_express_checkpoint(path.c_str()) == SQLITE_OK, "diagnostic checkpoint");
-    sqlite_express_stats before{}, during{}, after{};
-    require(sqlite_express_get_stats(path.c_str(), &before) == SQLITE_OK, "snapshot statistics");
+    require(sqlite_murmur_checkpoint(path.c_str()) == SQLITE_OK, "diagnostic checkpoint");
+    sqlite_murmur_stats before{}, during{}, after{};
+    require(sqlite_murmur_get_stats(path.c_str(), &before) == SQLITE_OK, "snapshot statistics");
     require(before.persisted_blocks > 0 && before.flush_batches > 0, "persisted counters recorded");
     require(before.uncompressed_bytes == before.persisted_blocks * 4096, "raw block accounting");
     require(before.compressed_payload_bytes < before.uncompressed_bytes, "compression savings recorded");
@@ -218,12 +218,12 @@ static void statsTests(sqlite3 *db, const std::string &path, const std::string &
     require(before.encrypted_record_bytes == before.compressed_payload_bytes + overhead * before.persisted_blocks,
             "encryption overhead accounting");
     require(before.rocksdb_wal_bytes > 0 && before.rocksdb_flush_bytes > 0, "RocksDB write counters");
-    require(sqlite_express_get_stats(nullptr, &after) == SQLITE_MISUSE, "null stats path");
-    require(sqlite_express_get_stats(path.c_str(), nullptr) == SQLITE_MISUSE, "null stats output");
-    require(sqlite_express_checkpoint(nullptr) == SQLITE_MISUSE, "null checkpoint path");
-    require(sqlite_express_get_stats((path + "-missing").c_str(), &after) == SQLITE_NOTFOUND,
+    require(sqlite_murmur_get_stats(nullptr, &after) == SQLITE_MISUSE, "null stats path");
+    require(sqlite_murmur_get_stats(path.c_str(), nullptr) == SQLITE_MISUSE, "null stats output");
+    require(sqlite_murmur_checkpoint(nullptr) == SQLITE_MISUSE, "null checkpoint path");
+    require(sqlite_murmur_get_stats((path + "-missing").c_str(), &after) == SQLITE_NOTFOUND,
             "missing statistics Store");
-    require(sqlite_express_checkpoint((path + "-missing").c_str()) == SQLITE_NOTFOUND,
+    require(sqlite_murmur_checkpoint((path + "-missing").c_str()) == SQLITE_NOTFOUND,
             "missing checkpoint Store");
 
     const int cacheSize = scalar(db, "PRAGMA cache_size");
@@ -232,11 +232,11 @@ static void statsTests(sqlite3 *db, const std::string &path, const std::string &
     const uint64_t sequence = persistedSequence(path);
     sql(db, "BEGIN IMMEDIATE");
     sql(db, "UPDATE noise SET payload=randomblob(16384)");
-    require(sqlite_express_get_stats(path.c_str(), &during) == SQLITE_OK, "active transaction counters");
+    require(sqlite_murmur_get_stats(path.c_str(), &during) == SQLITE_OK, "active transaction counters");
     require(during.vfs_write_bytes > before.vfs_write_bytes, "force uncommitted pager spill");
     require(during.vfs_block_writes > before.vfs_block_writes, "VFS block writes counted");
-    require(sqlite_express_checkpoint(path.c_str()) == SQLITE_OK, "checkpoint during active transaction");
-    require(sqlite_express_get_stats(path.c_str(), &after) == SQLITE_OK, "snapshot after active checkpoint");
+    require(sqlite_murmur_checkpoint(path.c_str()) == SQLITE_OK, "checkpoint during active transaction");
+    require(sqlite_murmur_get_stats(path.c_str(), &after) == SQLITE_OK, "snapshot after active checkpoint");
     require(after.persisted_blocks == before.persisted_blocks &&
             after.compressed_payload_bytes == before.compressed_payload_bytes &&
             after.encrypted_record_bytes == before.encrypted_record_bytes &&
@@ -245,7 +245,7 @@ static void statsTests(sqlite3 *db, const std::string &path, const std::string &
     sql(db, "ROLLBACK");
     sql(db, ("PRAGMA cache_size=" + std::to_string(cacheSize)).c_str());
     sql(db, "PRAGMA flush_interval_ms=250");
-    require(sqlite_express_checkpoint(path.c_str()) == SQLITE_OK, "settle rollback");
+    require(sqlite_murmur_checkpoint(path.c_str()) == SQLITE_OK, "settle rollback");
 }
 
 static void compressionTests(sqlite3 *db, const std::string &path) {
@@ -253,24 +253,24 @@ static void compressionTests(sqlite3 *db, const std::string &path) {
     for (const char *query : {"PRAGMA compression='zstd0'", "PRAGMA compression='zstd23'",
                               "PRAGMA compression='zstd3junk'", "PRAGMA compression='unknown'"})
         reject(db, query);
-    require(sqlite_express_checkpoint(path.c_str()) == SQLITE_OK, "settle before compression tests");
-    sqlite_express_stats before{}, after{};
-    require(sqlite_express_get_stats(path.c_str(), &before) == SQLITE_OK, "compression baseline");
+    require(sqlite_murmur_checkpoint(path.c_str()) == SQLITE_OK, "settle before compression tests");
+    sqlite_murmur_stats before{}, after{};
+    require(sqlite_murmur_get_stats(path.c_str(), &before) == SQLITE_OK, "compression baseline");
     sql(db, "PRAGMA compression=none");
-    sqlite3 *peer = openExpress(path);
+    sqlite3 *peer = openMurmur(path);
     require(scalarText(peer, "PRAGMA compression") == "none", "compression shared across connections");
     sql(db, "CREATE TABLE compression_cases(payload BLOB)");
     sql(db, "INSERT INTO compression_cases VALUES(zeroblob(16384))");
-    require(sqlite_express_checkpoint(path.c_str()) == SQLITE_OK, "persist uncompressed blocks");
-    require(sqlite_express_get_stats(path.c_str(), &after) == SQLITE_OK, "uncompressed counters");
+    require(sqlite_murmur_checkpoint(path.c_str()) == SQLITE_OK, "persist uncompressed blocks");
+    require(sqlite_murmur_get_stats(path.c_str(), &after) == SQLITE_OK, "uncompressed counters");
     require(after.uncompressed_bytes > before.uncompressed_bytes &&
             after.compressed_payload_bytes - before.compressed_payload_bytes ==
             after.uncompressed_bytes - before.uncompressed_bytes, "disabled compression stores raw blocks");
     before = after;
     sql(peer, "PRAGMA compression='zstd6'");
     sql(db, "UPDATE compression_cases SET payload=zeroblob(32768)");
-    require(sqlite_express_checkpoint(path.c_str()) == SQLITE_OK, "persist Zstd blocks");
-    require(sqlite_express_get_stats(path.c_str(), &after) == SQLITE_OK, "Zstd counters");
+    require(sqlite_murmur_checkpoint(path.c_str()) == SQLITE_OK, "persist Zstd blocks");
+    require(sqlite_murmur_get_stats(path.c_str(), &after) == SQLITE_OK, "Zstd counters");
     require(after.compressed_payload_bytes - before.compressed_payload_bytes <
             after.uncompressed_bytes - before.uncompressed_bytes, "Zstd level override compresses data");
     require(sqlite3_close(peer) == SQLITE_OK, "close compression peer");
@@ -287,11 +287,11 @@ static void rocksdbPragmaTests(sqlite3 *db, const std::string &path) {
         {"rocksdb_block_cache_bytes", "2097152", "-1", "18446744073709551616"},
         {"rocksdb_max_background_jobs", "3", "0", "2147483648"},
     };
-    sqlite3 *peer = openExpress(path);
+    sqlite3 *peer = openMurmur(path);
     const std::string otherPath = path + "-independent";
-    sqlite3 *other = openExpress(otherPath);
+    sqlite3 *other = openMurmur(otherPath);
     sqlite3 *readOnly = nullptr;
-    require(sqlite3_open_v2(path.c_str(), &readOnly, SQLITE_OPEN_READONLY, "sqlite-express") == SQLITE_OK,
+    require(sqlite3_open_v2(path.c_str(), &readOnly, SQLITE_OPEN_READONLY, "sqlite-murmur") == SQLITE_OK,
             "open read-only peer");
     for (const auto &setting : settings) {
         const std::string query = std::string("PRAGMA ") + setting.name;
@@ -357,28 +357,28 @@ int main(int argc, char **argv) {
     const std::string cipher = argc > 1 ? argv[1] : "aes256gcm";
     const auto id = std::chrono::steady_clock::now().time_since_epoch().count();
     const std::string path = (std::filesystem::temp_directory_path() /
-        ("sqlite-express-test-" + std::to_string(id))).string();
+        ("sqlite-murmur-test-" + std::to_string(id))).string();
 
     unsigned char key[32];
     for (size_t i = 0; i < sizeof(key); ++i) key[i] = static_cast<unsigned char>(i + 1);
-    sqlite_express_config config{};
+    sqlite_murmur_config config{};
     config.key = key;
     config.flush_interval_ms = 250;
     config.cache_pages = 32; // exercise eviction
     config.rocksdb_sync = 1;
     try {
-        require(sqlite_express_register(&config) == SQLITE_OK, "register VFS");
+        require(sqlite_murmur_register(&config) == SQLITE_OK, "register VFS");
         sidecarAccessTests(path + "-access");
         alignedWriteTests(path + "-writes", cipher);
         std::cerr << "TEST first open\n";
-        sqlite3 *db = openExpress(path);
-        require(sqlite_express_unregister() == SQLITE_BUSY,
+        sqlite3 *db = openMurmur(path);
+        require(sqlite_murmur_unregister() == SQLITE_BUSY,
                 "unregister must refuse open handles");
         require(scalar(db, "PRAGMA mmap_size") == 0, "no mmap");
         require(scalar(db, "PRAGMA page_size") > 0, "SQLite pages available");
         require(scalar(db, "PRAGMA flush_interval_ms") == 250, "default flush interval");
         require(scalar(db, "PRAGMA flush_interval_ms=10") == 10, "set interval");
-        sqlite3 *peer = openExpress(path);
+        sqlite3 *peer = openMurmur(path);
         require(scalar(peer, "PRAGMA flush_interval_ms") == 10, "interval shared by connections");
         require(scalar(peer, "PRAGMA flush_interval_ms=0") == 250, "zero restores default");
         require(scalar(db, "PRAGMA flush_interval_ms") == 250, "peer updates interval");
@@ -390,13 +390,13 @@ int main(int argc, char **argv) {
         require(scalar(db, "PRAGMA flush_interval_ms") == 250, "invalid interval leaves setting unchanged");
         require(scalarText(db, "PRAGMA cipher") == "aes256gcm", "default cipher");
         reject(db, "PRAGMA cipher='unknown'");
-#ifdef SQLITE_EXPRESS_TEST_NO_AEGIS256
+#ifdef SQLITE_MURMUR_TEST_NO_AEGIS256
         reject(db, "PRAGMA cipher='aegis256'");
 #endif
         sql(db, ("PRAGMA cipher='" + cipher + "'").c_str());
         require(scalarText(db, "PRAGMA cipher") == cipher, "selected cipher");
         require(sqlite3_close(db) == SQLITE_OK, "close empty database");
-        db = openExpress(path);
+        db = openMurmur(path);
         require(scalarText(db, "PRAGMA cipher") == cipher, "empty database remembers cipher");
         sql(db, "PRAGMA journal_mode=DELETE");
         char *error = nullptr;
@@ -433,7 +433,7 @@ int main(int argc, char **argv) {
                 std::to_string(n) + "' WHERE id=2";
             sql(db, statement.c_str());
         }
-        require(sqlite_express_flush(path.c_str()) == SQLITE_OK,
+        require(sqlite_murmur_flush(path.c_str()) == SQLITE_OK,
                 "manual flush of committed pages");
         sql(db, "PRAGMA flush_interval_ms=60000");
         const uint64_t before = persistedSequence(path);
@@ -446,9 +446,9 @@ int main(int argc, char **argv) {
         require(sqlite3_close(db) == SQLITE_OK, "close database");
 
         std::cerr << "TEST reopen after flush\n";
-        db = openExpress(path);
-        sqlite_express_stats reopenedStats{};
-        require(sqlite_express_get_stats(path.c_str(), &reopenedStats) == SQLITE_OK, "reopen statistics");
+        db = openMurmur(path);
+        sqlite_murmur_stats reopenedStats{};
+        require(sqlite_murmur_get_stats(path.c_str(), &reopenedStats) == SQLITE_OK, "reopen statistics");
         require(reopenedStats.flush_batches == 0 && reopenedStats.vfs_write_bytes == 0 &&
                 reopenedStats.rocksdb_wal_bytes == 0, "counters reset on reopen");
         require(scalarText(db, "PRAGMA cipher") == cipher, "cipher remembered on reopen");
@@ -477,17 +477,17 @@ int main(int argc, char **argv) {
                 "SQLite database integrity after recovery");
         require(sqlite3_close(db) == SQLITE_OK, "close reopen");
 
-        require(sqlite_express_unregister() == SQLITE_OK, "unregister");
+        require(sqlite_murmur_unregister() == SQLITE_OK, "unregister");
         // An incorrect key must not silently return arbitrary plaintext.
         unsigned char wrongKey[32] = {};
         std::cerr << "TEST bad key\n";
         config.key = wrongKey;
-        require(sqlite_express_register(&config) == SQLITE_OK, "register wrong key");
+        require(sqlite_murmur_register(&config) == SQLITE_OK, "register wrong key");
         std::cerr << "TEST reopen bad key\n";
         db = nullptr;
         const int openRc = sqlite3_open_v2(path.c_str(), &db,
             SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX,
-            "sqlite-express");
+            "sqlite-murmur");
         // SQLite may read page 1 during sqlite3_open_v2 itself, so the
         // authentication error is valid at either open or first statement.
         if (openRc == SQLITE_OK) {
@@ -498,19 +498,19 @@ int main(int argc, char **argv) {
             if (stmt) sqlite3_finalize(stmt);
         }
         if (db) sqlite3_close(db);
-        require(sqlite_express_unregister() == SQLITE_OK, "unregister wrong key");
+        require(sqlite_murmur_unregister() == SQLITE_OK, "unregister wrong key");
         config.key = key;
-        require(sqlite_express_register(&config) == SQLITE_OK, "register for tamper tests");
+        require(sqlite_murmur_register(&config) == SQLITE_OK, "register for tamper tests");
         tamperTests(path, cipher);
-        db = openExpress(path);
+        db = openMurmur(path);
         require(scalarText(db, "PRAGMA integrity_check") == "ok", "restored ciphertext intact");
         require(sqlite3_close(db) == SQLITE_OK, "close restored database");
-        require(sqlite_express_unregister() == SQLITE_OK, "unregister after tamper tests");
+        require(sqlite_murmur_unregister() == SQLITE_OK, "unregister after tamper tests");
         std::filesystem::remove_all(path);
-        std::cout << "sqlite-express integration test passed\n";
+        std::cout << "sqlite-murmur integration test passed\n";
         return 0;
     } catch (const std::exception &e) {
-        std::cerr << "sqlite-express test failure: " << e.what() << '\n';
+        std::cerr << "sqlite-murmur test failure: " << e.what() << '\n';
         std::filesystem::remove_all(path);
         return 1;
     }

@@ -71,14 +71,27 @@ fn after_update(
     non_pks_new: &[*mut value],
     non_pks_old: &[*mut value],
 ) -> Result<ResultCode, String> {
-    let next_db_version = crate::db_version::next_db_version(db, ext_data, None)?;
+    // Compare first: a no-op update still advances the version (exact
+    // numbering preserved) but skips key resolution and clock work.
+    let pks_changed = crate::compare_values::any_value_changed(pks_new, pks_old)?;
+    let mut any_non_pk_changed = false;
+    for (new, old) in non_pks_new.iter().zip(non_pks_old.iter()) {
+        if crsql_compare_sqlite_values(*new, *old) != 0 {
+            any_non_pk_changed = true;
+            break;
+        }
+    }
+    let next_db_version = crate::db_version::next_db_version_for_write(db, ext_data, None)?;
+    if !pks_changed && !any_non_pk_changed {
+        return Ok(ResultCode::OK);
+    }
     let new_key = tbl_info
         .get_or_create_key_via_raw_values(db, pks_new)
         .or_else(|_| Err("failed geteting or creating lookaside key"))?;
 
     // Changing a primary key column to a new value is the same thing as deleting the row
     // previously identified by the primary key.
-    if crate::compare_values::any_value_changed(pks_new, pks_old)? {
+    if pks_changed {
         let old_key = tbl_info
             .get_or_create_key_via_raw_values(db, pks_old)
             .or_else(|_| Err("failed geteting or creating lookaside key"))?;

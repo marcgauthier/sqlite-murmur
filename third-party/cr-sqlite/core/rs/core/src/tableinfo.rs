@@ -7,6 +7,7 @@ use crate::pack_columns::ColumnValue;
 use crate::stmt_cache::reset_cached_stmt;
 use crate::util::Countable;
 use alloc::boxed::Box;
+use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec;
@@ -44,6 +45,9 @@ pub struct TableInfo {
     // For merges --
     set_winner_clock_stmt: RefCell<Option<ManagedStmt>>,
     local_cl_stmt: RefCell<Option<ManagedStmt>>,
+    clock_scan_stmt: RefCell<Option<ManagedStmt>>,
+    // Bulk ingest: multi-column base upserts keyed by winner column set.
+    merge_group_stmt_cache: RefCell<BTreeMap<Vec<usize>, ManagedStmt>>,
     col_version_stmt: RefCell<Option<ManagedStmt>>,
     col_site_id_stmt: RefCell<Option<ManagedStmt>>,
     merge_pk_only_insert_stmt: RefCell<Option<ManagedStmt>>,
@@ -66,7 +70,7 @@ pub struct TableInfo {
 }
 
 impl TableInfo {
-    fn find_non_pk_col(&self, col_name: &str) -> Result<&ColumnInfo, ResultCode> {
+    pub(crate) fn find_non_pk_col(&self, col_name: &str) -> Result<&ColumnInfo, ResultCode> {
         for col in &self.non_pks {
             if col.name == col_name {
                 return Ok(col);
@@ -284,17 +288,30 @@ impl TableInfo {
         db: *mut sqlite3,
     ) -> Result<Ref<Option<ManagedStmt>>, ResultCode> {
         if self.set_winner_clock_stmt.try_borrow()?.is_none() {
+            // db_version is computed in Rust via next_db_version_for_write and
+            // bound as a plain value: same version, no per-row SQL function call.
+            // ON CONFLICT DO UPDATE rewrites the row in place where OR REPLACE
+            // would delete + reinsert it; same resulting row, less b-tree work.
+            // NULL sites are bound as 0 by the caller (see
+            // set_winner_clock_with_version): OR REPLACE used to map them to
+            // the DEFAULT 0 via its NOT NULL substitution rule, and the
+            // upsert has no such rule so the mapping is done explicitly.
             let sql = format!(
-                "INSERT OR REPLACE INTO \"{table_name}__crsql_clock\"
+                "INSERT INTO \"{table_name}__crsql_clock\"
               (key, col_name, col_version, db_version, seq, site_id)
               VALUES (
                 ?,
                 ?,
                 ?,
-                crsql_next_db_version(?),
+                ?,
                 ?,
                 ?
-              ) RETURNING key",
+              ) ON CONFLICT(key, col_name) DO UPDATE SET
+                col_version = excluded.col_version,
+                db_version = excluded.db_version,
+                seq = excluded.seq,
+                site_id = excluded.site_id
+              RETURNING key",
                 table_name = crate::util::escape_ident(&self.tbl_name),
             );
             let ret = db.prepare_v3(&sql, sqlite::PREPARE_PERSISTENT)?;
@@ -321,6 +338,23 @@ impl TableInfo {
             *self.local_cl_stmt.try_borrow_mut()? = Some(ret);
         }
         Ok(self.local_cl_stmt.try_borrow()?)
+    }
+
+    pub fn get_clock_scan_stmt(
+        &self,
+        db: *mut sqlite3,
+    ) -> Result<Ref<Option<ManagedStmt>>, ResultCode> {
+        if self.clock_scan_stmt.try_borrow()?.is_none() {
+            // One scan answers both the local causal length and the local
+            // column version for narrow tables (see scan_local_clocks).
+            let sql = format!(
+              "SELECT col_name, col_version FROM \"{table_name}__crsql_clock\" WHERE key = ?",
+              table_name = crate::util::escape_ident(&self.tbl_name),
+            );
+            let ret = db.prepare_v3(&sql, sqlite::PREPARE_PERSISTENT)?;
+            *self.clock_scan_stmt.try_borrow_mut()? = Some(ret);
+        }
+        Ok(self.clock_scan_stmt.try_borrow()?)
     }
 
     pub fn get_col_version_stmt(
@@ -407,8 +441,10 @@ impl TableInfo {
         db: *mut sqlite3,
     ) -> Result<Ref<Option<ManagedStmt>>, ResultCode> {
         if self.zero_clocks_on_resurrect_stmt.try_borrow()?.is_none() {
+            // db_version is computed in Rust via next_db_version_for_write and
+            // bound as a plain value: same version, no per-row SQL function call.
             let sql = format!(
-              "UPDATE \"{table_name}__crsql_clock\" SET col_version = 0, db_version = crsql_next_db_version(?) WHERE key = ? AND col_name IS NOT '{sentinel}'",
+              "UPDATE \"{table_name}__crsql_clock\" SET col_version = 0, db_version = ? WHERE key = ? AND col_name IS NOT '{sentinel}'",
               table_name = crate::util::escape_ident(&self.tbl_name),
               sentinel = crate::c::INSERT_SENTINEL
             );
@@ -577,6 +613,50 @@ impl TableInfo {
         col_info.get_merge_insert_stmt(self, db)
     }
 
+    /**
+     * Multi-column base upsert for bulk ingest: writes all winning columns
+     * of one row in a single statement. `col_indices` indexes `non_pks`,
+     * must be sorted, unique, and non-empty. Cached per column set.
+     */
+    pub fn get_merge_group_stmt(
+        &self,
+        db: *mut sqlite3,
+        col_indices: &[usize],
+    ) -> Result<Ref<ManagedStmt>, ResultCode> {
+        if !self
+            .merge_group_stmt_cache
+            .try_borrow()?
+            .contains_key(col_indices)
+        {
+            let mut idents = crate::util::as_identifier_list(&self.pks, None)?;
+            let mut binds = crate::util::binding_list(self.pks.len());
+            let mut sets: Vec<String> = vec![];
+            for idx in col_indices.iter() {
+                let col = &self.non_pks[*idx];
+                idents.push_str(", \"");
+                idents.push_str(&crate::util::escape_ident(&col.name));
+                idents.push('"');
+                binds.push_str(", ?");
+                sets.push(format!("\"{}\" = ?", crate::util::escape_ident(&col.name)));
+            }
+            let sql = format!(
+                "INSERT INTO \"{table}\" ({idents}) VALUES ({binds}) ON CONFLICT DO UPDATE SET {sets}",
+                table = crate::util::escape_ident(&self.tbl_name),
+                idents = idents,
+                binds = binds,
+                sets = sets.join(", "),
+            );
+            let stmt = db.prepare_v3(&sql, sqlite::PREPARE_PERSISTENT)?;
+            self.merge_group_stmt_cache
+                .try_borrow_mut()?
+                .insert(col_indices.to_vec(), stmt);
+        }
+        Ok(Ref::map(
+            self.merge_group_stmt_cache.try_borrow()?,
+            |m| &m[col_indices],
+        ))
+    }
+
     pub fn get_row_patch_data_stmt(
         &self,
         db: *mut sqlite3,
@@ -592,6 +672,9 @@ impl TableInfo {
         stmt.take();
         let mut stmt = self.local_cl_stmt.try_borrow_mut()?;
         stmt.take();
+        let mut stmt = self.clock_scan_stmt.try_borrow_mut()?;
+        stmt.take();
+        self.merge_group_stmt_cache.try_borrow_mut()?.clear();
         let mut stmt = self.col_version_stmt.try_borrow_mut()?;
         stmt.take();
         let mut stmt = self.merge_pk_only_insert_stmt.try_borrow_mut()?;
@@ -886,6 +969,8 @@ pub fn pull_table_info(
         non_pks,
         set_winner_clock_stmt: RefCell::new(None),
         local_cl_stmt: RefCell::new(None),
+        clock_scan_stmt: RefCell::new(None),
+        merge_group_stmt_cache: RefCell::new(BTreeMap::new()),
         col_version_stmt: RefCell::new(None),
         col_site_id_stmt: RefCell::new(None),
 

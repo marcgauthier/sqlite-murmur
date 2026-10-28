@@ -56,11 +56,21 @@ fn did_cid_win(
             let local_version = col_vrsn_stmt.column_int64(0);
             reset_cached_stmt(col_vrsn_stmt.stmt)?;
             // causal lengths are the same. Fall back to original algorithm.
-            if col_version > local_version {
-                return Ok(true);
-            } else if col_version < local_version {
-                return Ok(false);
+            if let Some(won) = compare_col_version(col_version, local_version) {
+                return Ok(won);
             }
+            return did_cid_win_with_local_version(
+                db,
+                ext_data,
+                insert_tbl,
+                tbl_info,
+                unpacked_pks,
+                key,
+                insert_val,
+                insert_site_id,
+                col_name,
+                errmsg,
+            );
         }
         Ok(ResultCode::DONE) => {
             reset_cached_stmt(col_vrsn_stmt.stmt)?;
@@ -75,7 +85,38 @@ fn did_cid_win(
             return Err(rc);
         }
     }
+}
 
+/**
+ * Three-way column version compare shared by the legacy probe path and the
+ * clock-scan path. Returns None on equality so the caller falls through to
+ * value and site-id tie-breaks.
+ */
+fn compare_col_version(
+    insert_col_vrsn: sqlite::int64,
+    local_vrsn: sqlite::int64,
+) -> Option<bool> {
+    if insert_col_vrsn > local_vrsn {
+        Some(true)
+    } else if insert_col_vrsn < local_vrsn {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn did_cid_win_with_local_version(
+    db: *mut sqlite3,
+    ext_data: *mut crsql_ExtData,
+    insert_tbl: &str,
+    tbl_info: &TableInfo,
+    unpacked_pks: &Vec<ColumnValue>,
+    key: sqlite::int64,
+    insert_val: *mut sqlite::value,
+    insert_site_id: &[u8],
+    col_name: &str,
+    errmsg: *mut *mut c_char,
+) -> Result<bool, ResultCode> {
     // versions are equal
     // need to compare values
     let col_val_stmt_ref = tbl_info.get_col_value_stmt(db, col_name)?;
@@ -162,14 +203,50 @@ fn set_winner_clock(
     insert_site_id: &[u8],
     insert_seq: sqlite::int64,
 ) -> Result<sqlite::int64, ResultCode> {
+    // Same version the embedded crsql_next_db_version(?) call produced, but
+    // computed once in Rust with a once-per-tx data_version check.
+    let db_vrsn_to_write =
+        crate::db_version::next_db_version_for_write(db, ext_data, Some(insert_db_vrsn))
+            .or(Err(ResultCode::ERROR))?;
+    set_winner_clock_with_version(
+        db,
+        ext_data,
+        tbl_info,
+        key,
+        insert_col_name,
+        insert_col_vrsn,
+        db_vrsn_to_write,
+        insert_site_id,
+        insert_seq,
+    )
+}
+
+/**
+ * Resolve a site id blob to its ordinal, inserting a mapping on first sight.
+ * Shared by row-by-row and bulk ingestion (same cache behavior).
+ */
+pub(crate) fn ordinal_for_site(
+    _db: *mut sqlite3,
+    ext_data: *mut crsql_ExtData,
+    insert_site_id: &[u8],
+) -> Result<Option<sqlite::int64>, ResultCode> {
     // set the site_id ordinal
     // get the returned ordinal
     // use that in place of insert_site_id in the metadata table(s)
 
     // on changes read, join to gather the proper site id.
+    // A last-value cache skips the ordinal SELECT for the common single-site
+    // bulk ingest case. Only pre-tx ordinals are cached (see
+    // insertedSiteIdThisTx) and the cache dies on commit/rollback, so a
+    // savepoint rollback can never strand a cached ordinal.
     let ordinal = unsafe {
         if insert_site_id.is_empty() {
             None
+        } else if (*ext_data).lastSiteIdOrdinalValid == 1
+            && (*ext_data).lastSiteIdLen as usize == insert_site_id.len()
+            && insert_site_id == &(*ext_data).lastSiteId[..insert_site_id.len()]
+        {
+            Some((*ext_data).lastSiteIdOrdinal)
         } else {
             (*ext_data).pSelectSiteIdOrdinalStmt.bind_blob(
                 1,
@@ -181,6 +258,16 @@ fn set_winner_clock(
                 let ordinal = (*ext_data).pSelectSiteIdOrdinalStmt.column_int64(0);
                 (*ext_data).pSelectSiteIdOrdinalStmt.clear_bindings()?;
                 (*ext_data).pSelectSiteIdOrdinalStmt.reset()?;
+
+                if (*ext_data).insertedSiteIdThisTx == 0
+                    && insert_site_id.len() <= (*ext_data).lastSiteId.len()
+                {
+                    (*ext_data).lastSiteId[..insert_site_id.len()]
+                        .copy_from_slice(insert_site_id);
+                    (*ext_data).lastSiteIdLen = insert_site_id.len() as c_int;
+                    (*ext_data).lastSiteIdOrdinal = ordinal;
+                    (*ext_data).lastSiteIdOrdinalValid = 1;
+                }
 
                 Some(ordinal)
             } else {
@@ -202,10 +289,28 @@ fn set_winner_clock(
                 let ordinal = (*ext_data).pSetSiteIdOrdinalStmt.column_int64(0);
                 (*ext_data).pSetSiteIdOrdinalStmt.clear_bindings()?;
                 (*ext_data).pSetSiteIdOrdinalStmt.reset()?;
+                (*ext_data).insertedSiteIdThisTx = 1;
+                (*ext_data).lastSiteIdOrdinalValid = 0;
                 Some(ordinal)
             }
         }
     };
+
+    Ok(ordinal)
+}
+
+pub(crate) fn set_winner_clock_with_version(
+    db: *mut sqlite3,
+    ext_data: *mut crsql_ExtData,
+    tbl_info: &TableInfo,
+    key: sqlite::int64,
+    insert_col_name: &str,
+    insert_col_vrsn: sqlite::int64,
+    db_vrsn_to_write: sqlite::int64,
+    insert_site_id: &[u8],
+    insert_seq: sqlite::int64,
+) -> Result<sqlite::int64, ResultCode> {
+    let ordinal = ordinal_for_site(db, ext_data, insert_site_id)?;
 
     let set_stmt_ref = tbl_info.get_set_winner_clock_stmt(db)?;
     let set_stmt = set_stmt_ref.as_ref().ok_or(ResultCode::ERROR)?;
@@ -218,11 +323,14 @@ fn set_winner_clock(
     let bind_result = set_stmt
         .bind_text(2, insert_col_name, sqlite::Destructor::STATIC)
         .and_then(|_| set_stmt.bind_int64(3, insert_col_vrsn))
-        .and_then(|_| set_stmt.bind_int64(4, insert_db_vrsn))
+        .and_then(|_| set_stmt.bind_int64(4, db_vrsn_to_write))
         .and_then(|_| set_stmt.bind_int64(5, insert_seq))
         .and_then(|_| match ordinal {
             Some(ordinal) => set_stmt.bind_int64(6, ordinal),
-            None => set_stmt.bind_null(6),
+            // site_id is NOT NULL DEFAULT 0: legacy OR REPLACE mapped a
+            // NULL bind to the default via its NOT NULL substitution rule.
+            // The upsert has no such rule, so bind the 0 explicitly.
+            None => set_stmt.bind_int64(6, 0),
         });
 
     if let Err(rc) = bind_result {
@@ -262,33 +370,27 @@ fn merge_sentinel_only_insert(
         reset_cached_stmt(merge_stmt.stmt)?;
         return Err(rc);
     }
-    let rc = unsafe {
-        (*ext_data)
-            .pSetSyncBitStmt
-            .step()
-            .and_then(|_| (*ext_data).pSetSyncBitStmt.reset())
-            .and_then(|_| merge_stmt.step())
-    };
+    // Suppress local triggers while applying the remote row. Direct write to
+    // the shared sync bit integer; equivalent to stepping the set/clear
+    // statements without the per-row SQL overhead.
+    unsafe {
+        *(*ext_data).syncBit = 1;
+    }
+    let rc = merge_stmt.step();
 
     // TODO: report err?
     let _ = reset_cached_stmt(merge_stmt.stmt);
 
-    let sync_rc = unsafe {
-        (*ext_data)
-            .pClearSyncBitStmt
-            .step()
-            .and_then(|_| (*ext_data).pClearSyncBitStmt.reset())
-    };
-
-    if let Err(sync_rc) = sync_rc {
-        return Err(sync_rc);
+    unsafe {
+        *(*ext_data).syncBit = 0;
     }
+
     if let Err(rc) = rc {
         return Err(rc);
     }
 
     if let Ok(_) = rc {
-        zero_clocks_on_resurrect(db, tbl_info, key, remote_db_vsn)?;
+        zero_clocks_on_resurrect(db, ext_data, tbl_info, key, remote_db_vsn)?;
         return set_winner_clock(
             db,
             ext_data,
@@ -307,15 +409,29 @@ fn merge_sentinel_only_insert(
 
 fn zero_clocks_on_resurrect(
     db: *mut sqlite3,
+    ext_data: *mut crsql_ExtData,
     tbl_info: &TableInfo,
     key: sqlite::int64,
     insert_db_vrsn: sqlite::int64,
+) -> Result<ResultCode, ResultCode> {
+    // Same version the embedded crsql_next_db_version(?) call produced.
+    let db_vrsn_to_write =
+        crate::db_version::next_db_version_for_write(db, ext_data, Some(insert_db_vrsn))
+            .or(Err(ResultCode::ERROR))?;
+    zero_clocks_on_resurrect_with_version(db, tbl_info, key, db_vrsn_to_write)
+}
+
+pub(crate) fn zero_clocks_on_resurrect_with_version(
+    db: *mut sqlite3,
+    tbl_info: &TableInfo,
+    key: sqlite::int64,
+    db_vrsn_to_write: sqlite::int64,
 ) -> Result<ResultCode, ResultCode> {
     let zero_stmt_ref = tbl_info.get_zero_clocks_on_resurrect_stmt(db)?;
     let zero_stmt = zero_stmt_ref.as_ref().ok_or(ResultCode::ERROR)?;
 
     let ret = zero_stmt
-        .bind_int64(1, insert_db_vrsn)
+        .bind_int64(1, db_vrsn_to_write)
         .and_then(|_| zero_stmt.bind_int64(2, key))
         .and_then(|_| zero_stmt.step());
     reset_cached_stmt(zero_stmt.stmt)?;
@@ -340,22 +456,17 @@ unsafe fn merge_delete(
         reset_cached_stmt(delete_stmt.stmt)?;
         return Err(rc);
     }
-    let rc = (*ext_data)
-        .pSetSyncBitStmt
-        .step()
-        .and_then(|_| (*ext_data).pSetSyncBitStmt.reset())
-        .and_then(|_| delete_stmt.step());
+    unsafe {
+        *(*ext_data).syncBit = 1;
+    }
+    let rc = delete_stmt.step();
 
     reset_cached_stmt(delete_stmt.stmt)?;
 
-    let sync_rc = (*ext_data)
-        .pClearSyncBitStmt
-        .step()
-        .and_then(|_| (*ext_data).pClearSyncBitStmt.reset());
-
-    if let Err(sync_rc) = sync_rc {
-        return Err(sync_rc);
+    unsafe {
+        *(*ext_data).syncBit = 0;
     }
+
     if let Err(rc) = rc {
         return Err(rc);
     }
@@ -399,7 +510,61 @@ pub unsafe extern "C" fn crsql_merge_insert(
     }
 }
 
-fn get_local_cl(
+/**
+ * Tables this narrow (or narrower) read the row's clocks in one scan.
+ * Wider tables keep the legacy point probes: a full scan would read more
+ * rows than the probes it replaces.
+ */
+pub(crate) const CLOCK_SCAN_MAX_NON_PKS: usize = 8;
+
+fn scan_local_clocks(
+    db: *mut sqlite::sqlite3,
+    tbl_info: &TableInfo,
+    key: sqlite::int64,
+    col_name: &str,
+) -> Result<(sqlite::int64, Option<sqlite::int64>), ResultCode> {
+    let scan_stmt_ref = tbl_info.get_clock_scan_stmt(db)?;
+    let scan_stmt = scan_stmt_ref.as_ref().ok_or(ResultCode::ERROR)?;
+
+    if let Err(rc) = scan_stmt.bind_int64(1, key) {
+        reset_cached_stmt(scan_stmt.stmt)?;
+        return Err(rc);
+    }
+
+    let mut any_row = false;
+    let mut sentinel_cl: Option<sqlite::int64> = None;
+    let mut target_vrsn: Option<sqlite::int64> = None;
+    loop {
+        match scan_stmt.step() {
+            Ok(ResultCode::ROW) => {
+                any_row = true;
+                let name = scan_stmt.column_text(0)?;
+                let vrsn = scan_stmt.column_int64(1);
+                if name == crate::c::DELETE_SENTINEL {
+                    sentinel_cl = Some(vrsn);
+                } else if name == col_name {
+                    target_vrsn = Some(vrsn);
+                }
+            }
+            Ok(ResultCode::DONE) => break,
+            Ok(rc) | Err(rc) => {
+                reset_cached_stmt(scan_stmt.stmt)?;
+                return Err(rc);
+            }
+        }
+    }
+    reset_cached_stmt(scan_stmt.stmt)?;
+
+    // Same semantics as the legacy COALESCE(sentinel, row-exists ? 1 : 0).
+    let local_cl = match sentinel_cl {
+        Some(cl) => cl,
+        None if any_row => 1,
+        None => 0,
+    };
+    Ok((local_cl, target_vrsn))
+}
+
+pub(crate) fn get_local_cl(
     db: *mut sqlite::sqlite3,
     tbl_info: &TableInfo,
     key: sqlite::int64,
@@ -509,7 +674,14 @@ unsafe fn merge_insert(
     // We'll need the key for all later operations.
     let key = tbl_info.get_or_create_key(db, &unpacked_pks)?;
 
-    let local_cl = get_local_cl(db, &tbl_info, key)?;
+    // Narrow tables fold the local causal length and column version probes
+    // into one clock scan; wide tables keep the legacy probes.
+    let use_clock_scan = tbl_info.non_pks.len() <= CLOCK_SCAN_MAX_NON_PKS;
+    let (local_cl, prefetched_col_vrsn) = if use_clock_scan {
+        scan_local_clocks(db, &tbl_info, key, insert_col)?
+    } else {
+        (get_local_cl(db, &tbl_info, key)?, None)
+    };
 
     // We can ignore all updates from older causal lengths.
     // They won't win at anything.
@@ -624,9 +796,32 @@ unsafe fn merge_insert(
     // we can short-circuit via needs_resurrect
     // given the greater cl automatically means a win.
     // or if we realize that the row does not exist locally at all.
-    let does_cid_win = needs_resurrect
-        || !row_exists_locally
-        || did_cid_win(
+    let does_cid_win = if needs_resurrect || !row_exists_locally {
+        true
+    } else if use_clock_scan {
+        match prefetched_col_vrsn {
+            // target column unseen locally: same as the legacy missing-row win.
+            None => true,
+            Some(local_vrsn) => {
+                match compare_col_version(insert_col_vrsn, local_vrsn) {
+                    Some(won) => won,
+                    None => did_cid_win_with_local_version(
+                        db,
+                        (*tab).pExtData,
+                        insert_tbl,
+                        &tbl_info,
+                        &unpacked_pks,
+                        key,
+                        insert_val,
+                        insert_site_id,
+                        insert_col,
+                        errmsg,
+                    )?,
+                }
+            }
+        }
+    } else {
+        did_cid_win(
             db,
             (*tab).pExtData,
             insert_tbl,
@@ -638,7 +833,8 @@ unsafe fn merge_insert(
             insert_col,
             insert_col_vrsn,
             errmsg,
-        )?;
+        )?
+    };
 
     if !does_cid_win {
         // doesCidWin == 0? compared against our clocks, nothing wins. OK and
@@ -658,24 +854,19 @@ unsafe fn merge_insert(
         return Err(rc);
     }
 
-    let rc = (*(*tab).pExtData)
-        .pSetSyncBitStmt
-        .step()
-        .and_then(|_| (*(*tab).pExtData).pSetSyncBitStmt.reset())
-        .and_then(|_| merge_stmt.step());
+    unsafe {
+        *(*(*tab).pExtData).syncBit = 1;
+    }
+    let rc = merge_stmt.step();
 
     reset_cached_stmt(merge_stmt.stmt)?;
 
-    let sync_rc = (*(*tab).pExtData)
-        .pClearSyncBitStmt
-        .step()
-        .and_then(|_| (*(*tab).pExtData).pClearSyncBitStmt.reset());
+    unsafe {
+        *(*(*tab).pExtData).syncBit = 0;
+    }
 
     if let Err(rc) = rc {
         return Err(rc);
-    }
-    if let Err(sync_rc) = sync_rc {
-        return Err(sync_rc);
     }
 
     let merge_result = set_winner_clock(

@@ -1,0 +1,103 @@
+# Rust replication uses the host SQLite only. Dependencies are locked and local.
+find_program(MURMUR_RUSTUP rustup HINTS "$ENV{HOME}/.cargo/bin" REQUIRED)
+set(MURMUR_TOOLCHAIN "stable" CACHE STRING "Installed modern Rust toolchain for Murmur")
+execute_process(COMMAND ${MURMUR_RUSTUP} run ${MURMUR_TOOLCHAIN} cargo --version
+  RESULT_VARIABLE murmur_toolchain_status OUTPUT_QUIET ERROR_QUIET)
+if(NOT murmur_toolchain_status EQUAL 0)
+  message(FATAL_ERROR "Murmur requires installed Rust ${MURMUR_TOOLCHAIN}; install it with rustup toolchain install ${MURMUR_TOOLCHAIN} --profile minimal")
+endif()
+set(murmur_root "${PROJECT_SOURCE_DIR}/third-party/murmur-replication")
+set(murmur_build "${PROJECT_BINARY_DIR}/murmur")
+file(MAKE_DIRECTORY "${murmur_build}/cargo-home")
+file(WRITE "${murmur_build}/cargo-home/config.toml"
+  "[source.crates-io]\nreplace-with = 'vendored-sources'\n[source.vendored-sources]\ndirectory = '${murmur_root}/vendor'\n[net]\noffline = true\n")
+file(GLOB_RECURSE murmur_sources CONFIGURE_DEPENDS "${murmur_root}/src/*.rs")
+set(murmur_flavors static)
+if(SQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS)
+  list(APPEND murmur_flavors loadable)
+endif()
+foreach(flavor IN LISTS murmur_flavors)
+  set(features --crate-type staticlib)
+  if(flavor STREQUAL "loadable")
+    set(features --crate-type cdylib --features loadable)
+  endif()
+  set(archive "${murmur_build}/${flavor}/release/libmurmur_replication.a")
+  if(flavor STREQUAL "loadable")
+    set(output "${murmur_build}/${flavor}/release/${CMAKE_SHARED_LIBRARY_PREFIX}murmur_replication${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  else()
+    set(output "${archive}")
+  endif()
+  add_custom_command(OUTPUT "${output}"
+    COMMAND ${CMAKE_COMMAND} -E env "CARGO_HOME=${murmur_build}/cargo-home"
+      "CARGO_TARGET_DIR=${murmur_build}/${flavor}"
+      ${MURMUR_RUSTUP} run ${MURMUR_TOOLCHAIN} cargo rustc --lib --release --frozen --manifest-path "${murmur_root}/Cargo.toml" ${features}
+    DEPENDS ${murmur_sources} "${murmur_root}/Cargo.toml" "${murmur_root}/Cargo.lock"
+    WORKING_DIRECTORY "${murmur_build}" VERBATIM)
+  add_custom_target(murmur_${flavor}_build ALL DEPENDS "${output}")
+  if(flavor STREQUAL "static")
+    add_library(murmur_rust STATIC IMPORTED GLOBAL)
+    set_target_properties(murmur_rust PROPERTIES IMPORTED_LOCATION "${archive}")
+    add_dependencies(murmur_rust murmur_static_build)
+  else()
+    set(MURMUR_LOADABLE_LIBRARY "${output}")
+  endif()
+endforeach()
+add_library(sqlite_murmur_murmur_replication INTERFACE)
+add_library(sqlite_murmur::murmur_replication ALIAS sqlite_murmur_murmur_replication)
+target_link_libraries(sqlite_murmur_murmur_replication INTERFACE sqlite_murmur)
+target_include_directories(sqlite_murmur_murmur_replication INTERFACE "${PROJECT_SOURCE_DIR}/include")
+
+if(SQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS)
+# Companion cr-sqlite: use its API-table build, never embed another SQLite.
+set(crsql_load_build "${PROJECT_BINARY_DIR}/crsqlite-loadable")
+set(crsql_load_archive "${crsql_load_build}/target/release/libcrsql_bundle_static.a")
+add_custom_command(OUTPUT "${crsql_load_archive}"
+  COMMAND ${CMAKE_COMMAND} -E env "CARGO_HOME=${crsql_build}/cargo-home"
+    "CARGO_TARGET_DIR=${crsql_load_build}/target" "CRSQLITE_COMMIT_SHA=${CRSQLITE_REVISION}"
+    ${CRSQLITE_RUSTUP} run ${CRSQLITE_TOOLCHAIN} cargo build --release --frozen
+    --manifest-path "${crsql_root}/core/rs/bundle_static/Cargo.toml" --features loadable_extension
+  DEPENDS ${crsql_rust_sources} "${crsql_root}/sqlite-murmur-revision.txt"
+  WORKING_DIRECTORY "${PROJECT_BINARY_DIR}" VERBATIM)
+add_custom_target(crsqlite_loadable_rust_build DEPENDS "${crsql_load_archive}")
+add_library(crsqlite_loadable_rust STATIC IMPORTED GLOBAL)
+set_target_properties(crsqlite_loadable_rust PROPERTIES IMPORTED_LOCATION "${crsql_load_archive}")
+add_dependencies(crsqlite_loadable_rust crsqlite_loadable_rust_build)
+add_library(murmur_crsqlite MODULE "${crsql_root}/core/src/crsqlite.c" "${crsql_root}/core/src/changes-vtab.c" "${crsql_root}/core/src/ext-data.c")
+target_include_directories(murmur_crsqlite PRIVATE "${PROJECT_SOURCE_DIR}/third-party/sqlite" "${crsql_root}/core/src")
+target_link_libraries(murmur_crsqlite PRIVATE crsqlite_loadable_rust Threads::Threads ${CMAKE_DL_LIBS} m)
+set_target_properties(murmur_crsqlite PROPERTIES PREFIX "")
+if(UNIX AND NOT APPLE)
+  target_link_options(murmur_crsqlite PRIVATE "-Wl,--exclude-libs,ALL")
+endif()
+
+endif()
+
+if(SQLITE_MURMUR_BUILD_TESTS)
+  add_executable(sqlite_murmur_murmur_test tests/murmur_replication.cpp)
+  target_link_libraries(sqlite_murmur_murmur_test PRIVATE sqlite_murmur::murmur_replication)
+  find_package(Python3 3.10 COMPONENTS Interpreter REQUIRED)
+  add_test(NAME sqlite_murmur_murmur COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/murmur_smoke.py $<TARGET_FILE:sqlite_murmur_murmur_test>)
+  set_tests_properties(sqlite_murmur_murmur PROPERTIES TIMEOUT 120)
+  add_executable(sqlite_murmur_integrated_murmur_test tests/murmur_replication.cpp)
+  target_compile_definitions(sqlite_murmur_integrated_murmur_test PRIVATE MURMUR_TEST_INTEGRATED=1)
+  target_link_libraries(sqlite_murmur_integrated_murmur_test PRIVATE sqlite_murmur::sqlite_murmur)
+  add_test(NAME sqlite_murmur_integrated_murmur COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/murmur_smoke.py $<TARGET_FILE:sqlite_murmur_integrated_murmur_test>)
+  set_tests_properties(sqlite_murmur_integrated_murmur PROPERTIES TIMEOUT 120)
+  if(SQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS)
+  add_executable(sqlite_murmur_murmur_loadable_test tests/murmur_replication.cpp)
+  target_compile_definitions(sqlite_murmur_murmur_loadable_test PRIVATE MURMUR_TEST_LOADABLE=1)
+  target_link_libraries(sqlite_murmur_murmur_loadable_test PRIVATE sqlite_murmur)
+  add_dependencies(sqlite_murmur_murmur_loadable_test murmur_loadable_build murmur_crsqlite)
+  add_test(NAME sqlite_murmur_murmur_loadable COMMAND ${Python3_EXECUTABLE} ${PROJECT_SOURCE_DIR}/tests/murmur_smoke.py $<TARGET_FILE:sqlite_murmur_murmur_loadable_test> "${MURMUR_LOADABLE_LIBRARY}" $<TARGET_FILE:murmur_crsqlite>)
+  set_tests_properties(sqlite_murmur_murmur_loadable PROPERTIES TIMEOUT 120)
+  endif()
+endif()
+install(FILES "${murmur_build}/static/release/libmurmur_replication.a" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+if(SQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS)
+  install(FILES "${MURMUR_LOADABLE_LIBRARY}" DESTINATION ${CMAKE_INSTALL_LIBDIR})
+  install(TARGETS murmur_crsqlite LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR})
+endif()
+install(FILES "${PROJECT_SOURCE_DIR}/include/sqlite_murmur_replication.h" "${PROJECT_SOURCE_DIR}/include/sqlite_murmur_crsqlite.h" DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+
+install(FILES "${murmur_root}/README.md" "${murmur_root}/USAGE.md" "${murmur_root}/PROVENANCE.md"
+  DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/sqlite_murmur/murmur-replication)

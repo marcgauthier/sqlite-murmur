@@ -176,6 +176,39 @@ jobs:
           asset_name: ${{ matrix.asset_name }}
           tag: ${{ github.ref }}
 
+  prebuild-windows-arm64:
+    name: Prebuild for Windows arm64
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: true
+
+      - name: Rust Nightly
+        run: |
+          rustup toolchain install nightly-2023-10-05
+          rustup target add aarch64-pc-windows-msvc --toolchain nightly-2023-10-05
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: amd64_arm64
+
+      - name: Build
+        shell: bash
+        run: |
+          cd core
+          export CI_MAYBE_TARGET="aarch64-pc-windows-msvc" && export CI_GCC="clang" && make loadable
+          cd dist && 7z a crsqlite.zip crsqlite.dll
+
+      - name: Upload binaries to release
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: core/dist/crsqlite.zip
+          asset_name: crsqlite-win-aarch64.zip
+          tag: ${{ github.ref }}
+
   prebuild-windows-i686:
     name: Prebuild for Windows i686
     runs-on: ${{ matrix.os }}
@@ -217,15 +250,27 @@ jobs:
           tag: ${{ github.ref }}
 
   prebuild-android:
-    name: Prebuild for android
+    name: Prebuild for android ${{ matrix.rust_target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
+            rust_target: aarch64-linux-android
             library_name: crsqlite.so
             artifact_name: crsqlite.zip
             asset_name: crsqlite-aarch64-linux-android.zip
+          - os: ubuntu-latest
+            rust_target: armv7-linux-androideabi
+            library_name: crsqlite.so
+            artifact_name: crsqlite.zip
+            asset_name: crsqlite-armv7-linux-androideabi.zip
+          - os: ubuntu-latest
+            rust_target: x86_64-linux-android
+            library_name: crsqlite.so
+            artifact_name: crsqlite.zip
+            asset_name: crsqlite-x86_64-linux-android.zip
 
     steps:
       - uses: actions/checkout@v3
@@ -235,7 +280,7 @@ jobs:
       - name: Rust Nightly
         run: |
           rustup toolchain install nightly-2023-10-05
-          rustup target add aarch64-linux-android --toolchain nightly-2023-10-05
+          rustup target add ${{ matrix.rust_target }} --toolchain nightly-2023-10-05
           rustup component add rust-src --toolchain nightly-2023-10-05-x86_64-unknown-linux-gnu
 
       - uses: nttld/setup-ndk@v1
@@ -253,7 +298,7 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
         run: |
           cd core
-          export ANDROID_TARGET=aarch64-linux-android; make loadable
+          export ANDROID_TARGET=${{ matrix.rust_target }}; make SHARED_CFLAGS="-Wl,-z,max-page-size=16384" loadable
           cd dist; zip crsqlite.zip ${{ matrix.library_name }}
 
       - name: Upload binaries to release

@@ -1,0 +1,40 @@
+@PACKAGE_INIT@
+include(CMakeFindDependencyMacro)
+find_dependency(Threads)
+function(_sqlite_murmur_import name filename)
+  if(NOT TARGET sqlite_murmur::${name})
+    add_library(sqlite_murmur::${name} STATIC IMPORTED)
+    set_target_properties(sqlite_murmur::${name} PROPERTIES
+      IMPORTED_LOCATION "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_LIBDIR@/${filename}")
+  endif()
+endfunction()
+_sqlite_murmur_import(sqlite3 "@CMAKE_STATIC_LIBRARY_PREFIX@sqlite_murmur_sqlite@CMAKE_STATIC_LIBRARY_SUFFIX@")
+set_target_properties(sqlite_murmur::sqlite3 PROPERTIES
+  INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+  INTERFACE_LINK_LIBRARIES "Threads::Threads;@CMAKE_DL_LIBS@;@SQLITE_MURMUR_MATH_LIBRARY@")
+_sqlite_murmur_import(rocksdb "@CMAKE_STATIC_LIBRARY_PREFIX@rocksdb@CMAKE_STATIC_LIBRARY_SUFFIX@")
+set_target_properties(sqlite_murmur::rocksdb PROPERTIES INTERFACE_LINK_LIBRARIES "Threads::Threads;@CMAKE_DL_LIBS@")
+_sqlite_murmur_import(zstd "@CMAKE_STATIC_LIBRARY_PREFIX@zstd@CMAKE_STATIC_LIBRARY_SUFFIX@")
+_sqlite_murmur_import(crypto "libcrypto.a")
+set_target_properties(sqlite_murmur::crypto PROPERTIES INTERFACE_LINK_LIBRARIES "Threads::Threads;@CMAKE_DL_LIBS@")
+if(@SQLITE_MURMUR_ENABLE_AEGIS256@)
+  _sqlite_murmur_import(aegis "@CMAKE_STATIC_LIBRARY_PREFIX@aegis@CMAKE_STATIC_LIBRARY_SUFFIX@")
+endif()
+include("${CMAKE_CURRENT_LIST_DIR}/sqlite_murmurTargets.cmake")
+check_required_components(sqlite_murmur)
+if(@SQLITE_MURMUR_ENABLE_CRSQLITE@)
+  _sqlite_murmur_import(crsqlite_rust "libcrsql_bundle_isolated.a")
+  _sqlite_murmur_import(crsqlite_static "@CMAKE_STATIC_LIBRARY_PREFIX@sqlite_murmur_crsqlite@CMAKE_STATIC_LIBRARY_SUFFIX@")
+  set_target_properties(sqlite_murmur::crsqlite_static PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES "${PACKAGE_PREFIX_DIR}/@CMAKE_INSTALL_INCLUDEDIR@"
+    INTERFACE_LINK_LIBRARIES "sqlite_murmur::crsqlite_rust;sqlite_murmur::sqlite3;Threads::Threads;@CMAKE_DL_LIBS@;@SQLITE_MURMUR_MATH_LIBRARY@")
+  set_property(TARGET sqlite_murmur::crsqlite_rust APPEND PROPERTY INTERFACE_LINK_LIBRARIES sqlite_murmur::crsqlite_static)
+  add_library(sqlite_murmur::crsqlite INTERFACE IMPORTED)
+  set_target_properties(sqlite_murmur::crsqlite PROPERTIES INTERFACE_LINK_LIBRARIES sqlite_murmur::crsqlite_static)
+endif()
+if(@SQLITE_MURMUR_ENABLE_MURMUR@)
+  _sqlite_murmur_import(murmur_rust "libmurmur_replication.a")
+  add_library(sqlite_murmur::murmur_replication INTERFACE IMPORTED)
+  set_target_properties(sqlite_murmur::murmur_replication PROPERTIES
+    INTERFACE_LINK_LIBRARIES "sqlite_murmur::sqlite_murmur")
+endif()

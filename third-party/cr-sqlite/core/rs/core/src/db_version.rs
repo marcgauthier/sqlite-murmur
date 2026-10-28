@@ -48,9 +48,9 @@ pub extern "C" fn crsql_next_db_version(
 }
 
 /**
- * Given this needs to do a pragma check, invoke it as little as possible.
- * TODO: We could optimize to only do a pragma check once per transaction.
- * Need to save some bit that states we checked the pragma already and reset on tx commit or rollback.
+ * Runs the PRAGMA data_version check on every call.
+ * Use this for read paths and direct SQL calls, which may run without
+ * holding the write lock while external commits can still land.
  */
 pub fn next_db_version(
     db: *mut sqlite3,
@@ -58,7 +58,33 @@ pub fn next_db_version(
     merging_version: Option<i64>,
 ) -> Result<i64, String> {
     fill_db_version_if_needed(db, ext_data)?;
+    Ok(advance_pending_db_version(ext_data, merging_version))
+}
 
+/**
+ * Write-path variant: runs the PRAGMA data_version check once per tx.
+ * Internal write paths (triggers, merges) always hold the write lock, so no
+ * external commit can land between the first check and tx end. The flag is
+ * reset on tx commit or rollback. Never use this for read paths.
+ */
+pub fn next_db_version_for_write(
+    db: *mut sqlite3,
+    ext_data: *mut crsql_ExtData,
+    merging_version: Option<i64>,
+) -> Result<i64, String> {
+    unsafe {
+        if (*ext_data).dbVersionCheckedForWrite == 0 {
+            fill_db_version_if_needed(db, ext_data)?;
+            (*ext_data).dbVersionCheckedForWrite = 1;
+        }
+    }
+    Ok(advance_pending_db_version(ext_data, merging_version))
+}
+
+fn advance_pending_db_version(
+    ext_data: *mut crsql_ExtData,
+    merging_version: Option<i64>,
+) -> i64 {
     let mut ret = unsafe { (*ext_data).dbVersion + 1 };
     if ret < unsafe { (*ext_data).pendingDbVersion } {
         ret = unsafe { (*ext_data).pendingDbVersion };
@@ -71,7 +97,7 @@ pub fn next_db_version(
     unsafe {
         (*ext_data).pendingDbVersion = ret;
     }
-    Ok(ret)
+    ret
 }
 
 pub fn fill_db_version_if_needed(

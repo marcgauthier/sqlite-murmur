@@ -1,5 +1,6 @@
-// A single configurable full-speed run: 80% reads and 20% inserts.
-#include "sqlite_express.h"
+// One configurable run: 80% destination reads and 20% local or replicated row writes.
+#include "sqlite_murmur.h"
+#include "replication_blob.h"
 #include <chrono>
 #include <cmath>
 #include <cstring>
@@ -11,14 +12,19 @@
 #include <stdexcept>
 #include <string>
 
-#ifdef SQLITE_EXPRESS_HAS_CRSQLITE
-#include "sqlite_express_crsqlite.h"
+#ifdef SQLITE_MURMUR_HAS_CRSQLITE
+#include "sqlite_murmur_crsqlite.h"
+#endif
+#ifndef SQLITE_MURMUR_CRSQLITE_VERSION
+#define SQLITE_MURMUR_CRSQLITE_VERSION "unavailable"
 #endif
 namespace {
 using Clock = std::chrono::steady_clock;
 struct CloseDatabase {
     bool replication = false;
+    bool integrated = false;
     void operator()(sqlite3 *db) const {
+        if (integrated) { sqlite_murmur_close(db); return; }
         if (replication) sqlite3_exec(db, "SELECT crsql_finalize()", nullptr, nullptr, nullptr);
         sqlite3_close(db);
     }
@@ -26,7 +32,7 @@ struct CloseDatabase {
 using Database = std::unique_ptr<sqlite3, CloseDatabase>;
 void enableReplication(Database &db, bool enabled) {
     if (!enabled) return;
-#ifdef SQLITE_EXPRESS_HAS_CRSQLITE
+#ifdef SQLITE_MURMUR_HAS_CRSQLITE
     char *error = nullptr;
     int rc = sqlite3_crsqlite_init(db.get(), &error, nullptr);
     std::string message = error ? error : sqlite3_errmsg(db.get());
@@ -34,11 +40,11 @@ void enableReplication(Database &db, bool enabled) {
     if (rc != SQLITE_OK) throw std::runtime_error("initialize cr-sqlite: " + message);
     db.get_deleter().replication = true;
 #else
-    throw std::runtime_error("replication requires SQLITE_EXPRESS_ENABLE_CRSQLITE=ON");
+    throw std::runtime_error("replication requires SQLITE_MURMUR_ENABLE_CRSQLITE=ON");
 #endif
 }
 constexpr uint64_t kSeedRows = 50000;
-constexpr char kPayload[] = "sqlite-express-benchmark-payload-abcdefghijklmnopqrstuvwxyz-0123456789";
+constexpr char kPayload[] = "sqlite-murmur-benchmark-payload-abcdefghijklmnopqrstuvwxyz-0123456789";
 
 void check(int rc, sqlite3 *db, const char *operation) {
     if (rc != SQLITE_OK)
@@ -46,9 +52,12 @@ void check(int rc, sqlite3 *db, const char *operation) {
 }
 Database open(const std::string &path, unsigned sqliteCacheKiB) {
     sqlite3 *raw = nullptr;
-    const int rc = sqlite3_open_v2(path.c_str(), &raw,
-        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, "sqlite-express");
-    Database db(raw);
+    // This benchmark is a consumer of the same public API as applications.
+    // Storage-only opens never initialize replication metadata or start QUIC.
+    sqlite_murmur_open_options options{SQLITE_MURMUR_OPEN_STORAGE_ONLY, nullptr, nullptr};
+    const int rc = sqlite_murmur_open_v2(path.c_str(), &raw,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, &options);
+    Database db(raw, CloseDatabase{false, true});
     check(rc, db.get(), "open database");
     const auto cachePragma = "PRAGMA cache_size=-" + std::to_string(sqliteCacheKiB);
     check(sqlite3_exec(db.get(), cachePragma.c_str(), nullptr, nullptr, nullptr),
@@ -128,6 +137,7 @@ int main(int argc, char **argv) {
     unsigned batchSize = 1;
     unsigned backgroundThreads = 0;
     bool replication = false;
+    std::string ingest = "local";
     const auto number = [](const std::string &value, uint64_t maximum) {
         uint64_t parsed = 0;
         if (value.empty()) throw std::runtime_error("missing numeric value");
@@ -145,7 +155,8 @@ int main(int argc, char **argv) {
             const std::string arg(argv[i]);
             if (arg == "--help") {
                 std::cout << "Usage: benchmark [--seconds=60] [--flush-interval-ms=100] [--cache-pages=16384] [--sqlite-cache-kib=1048576]\n"
-                          << "                 [--compression=zstd3|none|zstd1..zstd22] [--cipher=aegis256|aes256gcm] [--page-size=4096] [--batch-size=1] [--replication=off|on] [--background-threads=auto|1..256]\n";
+                          << "                 [--compression=zstd3|none|zstd1..zstd22] [--cipher=aegis256|aes256gcm] [--page-size=4096] [--batch-size=1] [--replication=off|on] [--ingest=local|row|blob] [--background-threads=auto|1..256]\n"
+                          << "row/blob ingest enables replication; --seconds measures destination active time, excluding source export/packing.\n";
                 return 0;
             }
             if (arg.rfind("--seconds=", 0) == 0) {
@@ -164,6 +175,9 @@ int main(int argc, char **argv) {
             } else if (arg.rfind("--background-threads=", 0) == 0) {
                 const auto value = arg.substr(21);
                 backgroundThreads = value == "auto" ? 0 : static_cast<unsigned>(number(value, 256));
+            } else if (arg.rfind("--ingest=", 0) == 0) {
+                ingest = arg.substr(9);
+                if (ingest != "local" && ingest != "row" && ingest != "blob") throw std::runtime_error("ingest must be local, row or blob");
             } else if (arg.rfind("--replication=", 0) == 0) {
                 const auto value = arg.substr(14);
                 if (value != "on" && value != "off") throw std::runtime_error("replication must be on or off");
@@ -186,11 +200,12 @@ int main(int argc, char **argv) {
                 } else throw std::runtime_error("compression must be none or zstd1 through zstd22");
             } else throw std::runtime_error("unknown argument: " + arg);
         }
-#ifndef SQLITE_EXPRESS_HAS_CRSQLITE
-        if (replication) throw std::runtime_error("replication requires SQLITE_EXPRESS_ENABLE_CRSQLITE=ON");
+        if (ingest != "local") replication = true;
+#ifndef SQLITE_MURMUR_HAS_CRSQLITE
+        if (replication) throw std::runtime_error("replication requires SQLITE_MURMUR_ENABLE_CRSQLITE=ON");
 #endif
-#ifndef SQLITE_EXPRESS_HAS_AEGIS256
-        if (cipher == "aegis256") throw std::runtime_error("aegis256 requires SQLITE_EXPRESS_ENABLE_AEGIS256=ON; use --cipher=aes256gcm for AES only");
+#ifndef SQLITE_MURMUR_HAS_AEGIS256
+        if (cipher == "aegis256") throw std::runtime_error("aegis256 requires SQLITE_MURMUR_ENABLE_AEGIS256=ON; use --cipher=aes256gcm for AES only");
 #endif
     } catch (const std::exception &error) {
         std::cerr << "BENCH_ERROR," << error.what() << '\n';
@@ -198,18 +213,19 @@ int main(int argc, char **argv) {
     }
 
     const std::string path = (std::filesystem::temp_directory_path() /
-        ("sqlite-express-benchmark-" + std::to_string(Clock::now().time_since_epoch().count()))).string();
+        ("sqlite-murmur-benchmark-" + std::to_string(Clock::now().time_since_epoch().count()))).string();
     try {
         unsigned char key[32];
         for (int i = 0; i < 32; ++i) key[i] = static_cast<unsigned char>(i + 11);
-        sqlite_express_config config{key, flushInterval, cachePages, 1};
-        check(sqlite_express_register(&config), nullptr, "register VFS");
+        sqlite_murmur_config config{key, flushInterval, cachePages, 1};
+        check(sqlite_murmur_register(&config), nullptr, "register VFS");
         uint64_t writes = 0;
         uint64_t transactions = 0;
         uint64_t rocksdbCacheBytes = 0;
         uint64_t trackedChanges = 0;
-        double seconds = 0, persistenceSeconds = 0, transactionSeconds = 0;
-        sqlite_express_stats stats{};
+        double seconds = 0, persistenceSeconds = 0, transactionSeconds = 0, wallSeconds = 0, sourceSeconds = 0;
+        uint64_t packedBytes = 0, appliedChanges = 0;
+        sqlite_murmur_stats stats{};
         {
             auto db = open(path, sqliteCacheKiB);
             const std::string pragmas = "PRAGMA page_size=" + std::to_string(pageSize) +
@@ -224,6 +240,8 @@ int main(int argc, char **argv) {
                 scalar(db.get(), "PRAGMA flush_interval_ms") != flushInterval ||
                 scalar(db.get(), "PRAGMA cache_size") != -static_cast<int64_t>(sqliteCacheKiB))
                 throw std::runtime_error("benchmark configuration did not take effect");
+            if (!replication && scalar(db.get(), "SELECT count(*) FROM sqlite_schema WHERE name GLOB 'crsql*' OR name GLOB 'murmur_*'") != 0)
+                throw std::runtime_error("storage benchmark unexpectedly initialized replication metadata");
             enableReplication(db, replication);
             exec(db.get(), "CREATE TABLE records(id INTEGER PRIMARY KEY NOT NULL, body TEXT NOT NULL DEFAULT '')");
             if (replication) exec(db.get(), "SELECT crsql_as_crr('main','records')");
@@ -232,7 +250,15 @@ int main(int argc, char **argv) {
             exec(db.get(), "BEGIN IMMEDIATE");
             for (uint64_t id = 1; id <= kSeedRows; ++id) insert.insert(id);
             exec(db.get(), "COMMIT");
-            check(sqlite_express_checkpoint(path.c_str()), db.get(), "persist seed data");
+            check(sqlite_murmur_checkpoint(path.c_str()), db.get(), "persist seed data");
+            Database source(nullptr);
+            if (ingest != "local") {
+                sqlite3 *raw = nullptr;
+                check(sqlite3_open_v2(":memory:", &raw, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, "unix"), raw, "open source");
+                source.reset(raw);
+                enableReplication(source, true);
+                exec(source.get(), "CREATE TABLE records(id INTEGER PRIMARY KEY NOT NULL, body TEXT NOT NULL DEFAULT ''); SELECT crsql_as_crr('main','records')");
+            }
             std::cout << "BENCH_CONFIG,cipher=" << cipher << ",flush_interval_ms=" << flushInterval
                       << ",page_size=" << pageSize << ",sqlite_cache_size=" << -static_cast<int64_t>(sqliteCacheKiB)
                       << ",sqlite_cache_bytes=" << static_cast<uint64_t>(sqliteCacheKiB) * 1024
@@ -242,56 +268,105 @@ int main(int argc, char **argv) {
                       << ",compression=" << compression << ",zstd_level=" << compressionLevel
                       << ",background_threads=" << backgroundThreads
                       << ",replication=" << (replication ? "on" : "off")
-                      << ",crsqlite_version=" << (replication ? "0.16.3" : "none")
-                      << ",connections=1,rocksdb_sync=1,batch_size=" << batchSize << ",seed_rows=" << kSeedRows
+                      << ",crsqlite_version=" << (replication ? SQLITE_MURMUR_CRSQLITE_VERSION : "none")
+                      << ",ingest=" << ingest << ",timing=" << (ingest == "local" ? "wall" : "destination_active")
+                      << ",connections=" << (source ? 2 : 1) << ",source_storage=" << (source ? "memory" : "none")
+                      << ",rocksdb_sync=1,batch_size=" << batchSize << ",seed_rows=" << kSeedRows
                       << ",payload_bytes=" << sizeof(kPayload) - 1 << ",target_seconds=" << duration << std::endl;
             const int64_t seedVersion = replication ? scalar(db.get(), "SELECT crsql_db_version()") : 0;
             uint64_t random = 1234 * 0x9e3779b97f4a7c15ULL;
             const auto start = Clock::now();
-            do {
-                const auto transactionStart = Clock::now();
-                if (batchSize > 1) exec(db.get(), "BEGIN IMMEDIATE");
-                for (unsigned n = 0; n < batchSize; ++n) {
-                    insert.insert(kSeedRows + ++writes);
-                    if (batchSize == 1)
+            if (ingest == "local") {
+                do {
+                    const auto transactionStart = Clock::now();
+                    if (batchSize > 1) exec(db.get(), "BEGIN IMMEDIATE");
+                    for (unsigned n = 0; n < batchSize; ++n) {
+                        insert.insert(kSeedRows + ++writes);
+                        if (batchSize == 1)
+                            transactionSeconds += std::chrono::duration<double>(Clock::now() - transactionStart).count();
+                        for (int i = 0; i < 4; ++i) read.read(randomID(random, kSeedRows + writes));
+                    }
+                    if (batchSize > 1) {
+                        exec(db.get(), "COMMIT");
                         transactionSeconds += std::chrono::duration<double>(Clock::now() - transactionStart).count();
-                    for (int i = 0; i < 4; ++i) read.read(randomID(random, kSeedRows + writes));
-                }
-                if (batchSize > 1) {
+                    }
+                    ++transactions;
+                } while (std::chrono::duration<double>(Clock::now() - start).count() < duration);
+                seconds = std::chrono::duration<double>(Clock::now() - start).count();
+            } else {
+                Statement sourceInsert(source.get(), "INSERT INTO records(id,body) VALUES(?1,?2)");
+                Statement changes(source.get(), "SELECT * FROM crsql_changes WHERE db_version>?1");
+                Statement rowApply(db.get(), "INSERT INTO crsql_changes VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)");
+                Statement blobApply(db.get(), "SELECT crsql_ingest_blob(?1)");
+                int64_t version = 0;
+                do {
+                    const auto sourceStart = Clock::now();
+                    exec(source.get(), "BEGIN IMMEDIATE");
+                    for (unsigned n = 0; n < batchSize; ++n) sourceInsert.insert(kSeedRows + writes + n + 1);
+                    exec(source.get(), "COMMIT");
+                    changes.reset();
+                    check(sqlite3_bind_int64(changes.get(), 1, version), source.get(), "bind export version");
+                    auto batch = replication_blob::capture(changes.get());
+                    version = scalar(source.get(), "SELECT crsql_db_version()");
+                    if (batch.rows.size() != batchSize) throw std::runtime_error("exported change count mismatch");
+                    packedBytes += batch.blob.size();
+                    // Binding the blob is part of destination work. Export, copying,
+                    // and packing are excluded identically for both apply methods.
+                    sourceSeconds += std::chrono::duration<double>(Clock::now() - sourceStart).count();
+                    const auto activeStart = Clock::now();
+                    exec(db.get(), "BEGIN IMMEDIATE");
+                    if (ingest == "blob") {
+                        blobApply.reset();
+                        check(sqlite3_bind_blob64(blobApply.get(), 1, batch.blob.data(), batch.blob.size(), SQLITE_STATIC), db.get(), "bind CRSB blob");
+                        if (sqlite3_step(blobApply.get()) != SQLITE_ROW || sqlite3_column_int64(blobApply.get(), 0) != batchSize)
+                            throw std::runtime_error(std::string("blob apply count/error: ") + sqlite3_errmsg(db.get()));
+                        blobApply.reset();
+                        check(sqlite3_clear_bindings(blobApply.get()), db.get(), "release blob");
+                    } else {
+                        for (const auto &row : batch.rows) {
+                            rowApply.reset();
+                            for (int i = 0; i < 9; ++i) check(sqlite3_bind_value(rowApply.get(), i+1, row[i].get()), db.get(), "bind incoming change");
+                            if (sqlite3_step(rowApply.get()) != SQLITE_DONE) throw std::runtime_error(sqlite3_errmsg(db.get()));
+                        }
+                    }
                     exec(db.get(), "COMMIT");
-                    transactionSeconds += std::chrono::duration<double>(Clock::now() - transactionStart).count();
-                }
-                ++transactions;
-            } while (std::chrono::duration<double>(Clock::now() - start).count() < duration);
+                    transactionSeconds += std::chrono::duration<double>(Clock::now() - activeStart).count();
+                    writes += batchSize;
+                    appliedChanges += batch.rows.size();
+                    for (uint64_t i = 0; i < uint64_t(batchSize) * 4; ++i) read.read(randomID(random, kSeedRows + writes));
+                    seconds += std::chrono::duration<double>(Clock::now() - activeStart).count();
+                    ++transactions;
+                } while (seconds < duration);
+            }
             const auto stop = Clock::now();
-            seconds = std::chrono::duration<double>(stop - start).count();
-            check(sqlite_express_checkpoint(path.c_str()), db.get(), "final persistence");
+            wallSeconds = std::chrono::duration<double>(stop - start).count();
+            check(sqlite_murmur_checkpoint(path.c_str()), db.get(), "final persistence");
             persistenceSeconds = std::chrono::duration<double>(Clock::now() - stop).count();
             if (replication) {
                 const auto query = "SELECT count(*) FROM crsql_changes WHERE \"table\"='records' AND cid='body' AND db_version>" + std::to_string(seedVersion);
                 trackedChanges = scalar(db.get(), query.c_str());
                 if (trackedChanges != writes) throw std::runtime_error("timed replication change count mismatch");
             }
-            check(sqlite_express_get_stats(path.c_str(), &stats), db.get(), "read storage statistics");
+            check(sqlite_murmur_get_stats(path.c_str(), &stats), db.get(), "read storage statistics");
         }
         uint64_t diskBytes = 0;
         for (const auto &entry : std::filesystem::recursive_directory_iterator(path))
             if (entry.is_regular_file()) diskBytes += entry.file_size();
         verify(path, kSeedRows + writes, sqliteCacheKiB, replication);
-        check(sqlite_express_unregister(), nullptr, "unregister VFS");
+        check(sqlite_murmur_unregister(), nullptr, "unregister VFS");
         std::filesystem::remove_all(path);
         const uint64_t operations = writes * 5;
         const double savings = stats.uncompressed_bytes ?
             100.0 * (1.0 - static_cast<double>(stats.compressed_payload_bytes) / stats.uncompressed_bytes) : 0;
-        std::cout << "BENCH_HEADER,seconds,reads,writes,operations,ops_per_second,read_ops_per_second,write_ops_per_second,persistence_seconds,ops_per_second_including_persistence,logical_database_bytes,rocksdb_files_bytes,zstd_level,compression_savings_pct,transactions,mean_write_transaction_ms,tracked_changes\n"
+        std::cout << "BENCH_HEADER,seconds,reads,writes,operations,ops_per_second,read_ops_per_second,write_ops_per_second,persistence_seconds,ops_per_second_including_persistence,logical_database_bytes,rocksdb_files_bytes,zstd_level,compression_savings_pct,transactions,mean_write_transaction_ms,tracked_changes,wall_seconds,source_prepare_seconds,packed_bytes,applied_changes,wall_ops_per_second_including_persistence\n"
                   << std::fixed << std::setprecision(6)
                   << "BENCH_CSV," << seconds << ',' << writes * 4 << ',' << writes << ',' << operations << ','
                   << operations / seconds << ',' << writes * 4 / seconds << ',' << writes / seconds << ','
                   << persistenceSeconds << ',' << operations / (seconds + persistenceSeconds) << ','
                   << stats.logical_size_bytes << ',' << diskBytes << ',' << compressionLevel << ',' << savings
-                  << ',' << transactions << ',' << transactionSeconds * 1000 / transactions << ',' << trackedChanges << '\n'
+                  << ',' << transactions << ',' << transactionSeconds * 1000 / transactions << ',' << trackedChanges << ',' << wallSeconds << ',' << sourceSeconds << ',' << packedBytes << ',' << appliedChanges << ',' << operations / (wallSeconds + persistenceSeconds) << '\n'
                   << std::setprecision(2)
-                  << "\n80% reads / 20% inserts, " << batchSize << " inserts/transaction, " << cipher << ", " << flushInterval
+                  << "\n80% reads / 20% destination row writes, " << batchSize << " inserts/transaction, " << cipher << ", " << flushInterval
                   << " ms flush, " << pageSize << " byte SQLite pages\n"
                   << "VFS cache: " << cachePages << " x 4096 byte blocks ("
                   << static_cast<double>(cachePages) / 256 << " MiB target plus overhead)\n"
@@ -299,12 +374,12 @@ int main(int argc, char **argv) {
                   << static_cast<double>(sqliteCacheKiB) / 1024 << " MiB target)\n"
                   << "RocksDB cache: " << rocksdbCacheBytes / 1048576.0 << " MiB\n"
                   << "Background compression/encryption workers: " << backgroundThreads << '\n'
-                  << "Replication change tracking: " << (replication ? "on (local only)" : "off") << ", tracked timed inserts: " << trackedChanges << '\n'
-                  << "Duration: " << seconds << " seconds\n"
+                  << "Replication change tracking: " << (replication ? (ingest == "local" ? "on (local only)" : ingest + " incoming apply") : "off") << ", tracked timed inserts: " << trackedChanges << '\n'
+                  << "Duration: " << seconds << " measured seconds; " << wallSeconds << " wall seconds; source preparation " << sourceSeconds << " seconds\n"
                   << "Operations: " << operations << " (" << writes * 4 << " reads, " << writes << " writes)\n"
                   << "Operations/second: " << operations / seconds << '\n'
                   << "Write transactions: " << transactions << ", mean duration: " << transactionSeconds * 1000 / transactions
-                  << " ms" << (batchSize > 1 ? " (includes interleaved reads)" : " (autocommit insert only)") << '\n'
+                  << " ms" << (ingest != "local" ? " (incoming apply plus commit; reads excluded)" : batchSize > 1 ? " (includes interleaved reads)" : " (autocommit insert only)") << '\n'
                   << "Final persistence: " << persistenceSeconds << " seconds\n"
                   << "SQLite logical size: " << stats.logical_size_bytes << " bytes (" << stats.logical_size_bytes / 1048576.0 << " MiB)\n"
                   << "RocksDB file size: " << diskBytes << " bytes (" << diskBytes / 1048576.0 << " MiB)\n"
@@ -313,7 +388,7 @@ int main(int argc, char **argv) {
         return 0;
     } catch (const std::exception &error) {
         std::cerr << "BENCH_ERROR," << error.what() << ",database=" << path << std::endl;
-        (void)sqlite_express_unregister();
+        (void)sqlite_murmur_unregister();
         return 1;
     }
 }
