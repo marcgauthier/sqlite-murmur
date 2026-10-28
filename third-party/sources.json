@@ -1,0 +1,42 @@
+[
+  {
+    "name": "sqlite",
+    "version": "3.54.1",
+    "url": "https://sqlite.org/2026/sqlite-amalgamation-3540100.zip",
+    "sha256": "0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9"
+  },
+  {
+    "name": "rocksdb",
+    "version": "8.9.1",
+    "url": "https://codeload.github.com/facebook/rocksdb/tar.gz/refs/tags/v8.9.1",
+    "sha256": "c22d2097e7aa75629612fd020499bdae0d3e321c7bc4361960c42aaf9cbd6dc1"
+  },
+  {
+    "name": "zstd",
+    "version": "1.5.7",
+    "url": "https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7",
+    "sha256": "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3"
+  },
+  {
+    "name": "aegis",
+    "version": "0.9.1",
+    "url": "https://codeload.github.com/aegis-aead/libaegis/tar.gz/fb173f3ea32e16c1c93c43035804ba6daf3adc59",
+    "sha256": "6b593142ddcbe412dcfdfa108c2ab3d7d62c550607b39441b4304151f32c85cd"
+  },
+  {
+    "name": "openssl",
+    "version": "3.5.9",
+    "url": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.5.9",
+    "sha256": "796831ec533bf41998eaaee9d632d921b8a69f57394fa4086ff01a941113d26d"
+  },
+  {
+    "name": "murmur-replication",
+    "version": "0.1.0",
+    "local_source": "/media/marc/2TB/Archives/MURMUR-RUST/replication",
+    "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
+    "working_tree_modified": true,
+    "description": "Rust SQLite extension; Murmur transport/membership adapted to cr-sqlite and SQLite metadata, SQL-only client interface",
+    "provenance": "murmur-replication/PROVENANCE.md",
+    "cargo": "murmur-replication/Cargo.lock; locked crates in murmur-replication/vendor/"
+  }
+]

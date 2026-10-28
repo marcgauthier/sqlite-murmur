@@ -1,0 +1,11 @@
+[package]
+name = "crash-host"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "crash-host"
+path = "src/main.rs"
+
+[dependencies]
+host-shim = { path = "../host-shim" }

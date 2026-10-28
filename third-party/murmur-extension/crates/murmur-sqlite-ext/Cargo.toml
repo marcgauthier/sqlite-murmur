@@ -1,0 +1,42 @@
+[package]
+name = "murmur-sqlite-ext"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# NOTE: `session`/`bundled` must stay OFF here. libsqlite3-sys forbids
+# combining `loadable_extension` with `preupdate_hook` (which `session`
+# requires), because session entry points are not in the
+# `sqlite3_api_routines` dispatch table. Session calls are declared manually
+# in `src/session_sys.rs`; loadable builds resolve them from the host's
+# libsqlite3, static builds from the host's static SQLite at final link. See
+# docs/PHASE0.md.
+rusqlite = { version = "0.40.2", default-features = false, features = [
+    "functions",
+    "hooks",
+    "trace",
+] }
+serde_json = "1"
+rand = "0.8"
+
+# Engine crates. Absolute path deps are temporary for local development;
+# Phase 5 migrates these to git coordinates once murmur-crdt is published.
+murmur-crdt = { path = "/media/marc/2TB/Archives/MURMUR-RUST/crdt" }
+murmur-spool = { path = "/media/marc/2TB/Archives/MURMUR-RUST/spool" }
+murmur-replication = { path = "/media/marc/2TB/Archives/MURMUR-RUST/replication" }
+
+[build-dependencies]
+cc = { version = "1", optional = true }
+
+[features]
+default = ["loadable"]
+loadable = ["rusqlite/loadable_extension"]
+static-sqlite = ["dep:cc"]
+
+[dev-dependencies]
+host-shim = { path = "../host-shim" }
+tempfile = "3"
+rcgen = "=0.13.2"
