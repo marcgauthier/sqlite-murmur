@@ -1,36 +1,59 @@
-name: SQLite Express benchmark (single database)
+name: SQLite Express benchmark
 
 on:
   workflow_dispatch:
   push:
     paths:
       - 'benchmarks/**'
+      - 'src/**'
+      - 'include/**'
+      - 'third-party/**'
+      - 'cmake/**'
+      - 'tests/**'
       - '.github/workflows/benchmark.yml'
       - 'CMakeLists.txt'
 
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Install build dependencies
+      - name: Install build tools
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y cmake g++ libsqlite3-dev librocksdb-dev libzstd-dev libssl-dev
+          sudo apt-get install -y cmake g++ make perl python3 libclang-dev
+      - name: Install cr-sqlite compiler toolchain
+        run: rustup toolchain install nightly-2023-10-05 --profile minimal
+      - name: Verify vendored sources
+        run: python3 third-party/verify.py
       - name: System information
         run: |
           lscpu | grep -E 'Model name:|CPU\(s\):|Thread\(s\) per core:|Core\(s\) per socket:'
           free -h
-      - name: Configure benchmark
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_BUILD_TESTS=OFF -DSQLITE_EXPRESS_BUILD_BENCHMARKS=ON
-      - name: Build benchmark
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_BUILD_BENCHMARKS=ON -DSQLITE_EXPRESS_ENABLE_CRSQLITE=ON
+      - name: Build from vendored sources
         run: cmake --build build --parallel 2
-      - name: Benchmark one SQLite Express database with 1, 4, 16 connections
+      - name: Tests
+        run: ctest --test-dir build --output-on-failure
+      - name: Benchmark default settings for 60 seconds
         shell: bash
         run: |
           set -o pipefail
-          timeout 240s ./build/sqlite_express_bench --scale=10 | tee benchmark-results.txt
+          timeout 180s ./build/benchmark | tee benchmark-results.txt
+      - name: Validate benchmark report
+        run: |
+          python3 - <<'PY'
+          import importlib.util
+          from pathlib import Path
+          spec = importlib.util.spec_from_file_location("benchmark_smoke", "tests/benchmark_smoke.py")
+          module = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(module)
+          module.validate(Path("benchmark-results.txt").read_text(), 60,
+                          {"cipher": "aegis256", "flush_interval_ms": 100,
+                           "cache_pages": 16384, "sqlite_cache_size": -1048576, "compression": "zstd3", "page_size": 4096, "rocksdb_cache_bytes": 33554432})
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

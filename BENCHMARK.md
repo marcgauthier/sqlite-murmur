@@ -2,7 +2,34 @@
 
 These measurements are **SQLite Express only**, with no comparisons to other database engines.
 
-## Sustained benchmark — October 27, 2026
+## Current 60-second mixed benchmark
+
+The current executable is `benchmark`: one connection, 80% random primary-key
+reads / 20% inserts, configurable inserts per transaction. All library sources,
+including optional cr-sqlite, are vendored under `third-party/`.
+
+Latest local results with replication tracking enabled:
+
+| Inserts/transaction | Operations/sec | Inserts/sec | RocksDB files MiB |
+| ---: | ---: | ---: | ---: |
+| 1 | 183,693 | 36,739 | 71.88 |
+| 100 | 372,226 | 74,445 | 135.09 |
+
+Intel Core i5-6500, four physical cores, Release build. AEGIS-256, Zstd3,
+100 ms flush, 4 KiB pages, 64 MiB VFS cache, 1 GiB SQLite cache, 32 MiB RocksDB
+cache. Four compression/encryption workers feed one ordered RocksDB writer.
+Replication means local change tracking; network transport is excluded.
+
+These are individual trials with highly compressible repeated 70-byte payloads.
+Setup/seed data and final verification are excluded; final persistence is reported
+separately. Every run checks exported change counts, reopening and integrity.
+Disk sizes contain different row counts. Prefer batches of 100 where transaction
+boundaries permit; small differences between trials may be normal variation.
+
+[Raw before/after results and profiling summary](benchmarks/results/2026-10-27/README.md)
+document the three VFS optimizations and their measurement limits.
+
+## Historical CI benchmark — October 27, 2026
 
 Run: https://github.com/marcgauthier/sqlite-express/actions/runs/40564652887
 
@@ -16,7 +43,7 @@ Run: https://github.com/marcgauthier/sqlite-express/actions/runs/40564652887
 **Environment:** GitHub Actions Ubuntu 24.04 runner, AMD EPYC 7763, 4 virtual CPUs,
 15 GiB RAM. One RocksDB-backed SQLite Express database shared across all
 connections. The final database contained **512,000 rows**; reopen, count and
-\`PRAGMA integrity_check\` passed.
+`PRAGMA integrity_check` passed.
 
 **Configuration:** 4,096-byte VFS blocks, encrypted 16,384-page cache target,
 250 ms background flush interval, Zstd level 3, AES-256-GCM, RocksDB sync
@@ -41,24 +68,30 @@ write-through rates. Results on shared CI hosts vary, and these measurements
 are not a replacement for repeated long-duration benchmarks on dedicated
 hardware.
 
-## Reproduce
+## Reproduce the current benchmark
 
-Build with CMake, RocksDB, SQLite3, Zstd, and OpenSSL installed:
+See [build prerequisites](README.md#dependencies-and-build) and
+[optional cr-sqlite setup](README.md#optional-cr-sqlite-replication). Once the
+pinned Rust toolchain and libclang compiler tooling are installed, builds use
+vendored sources offline:
 
-\`\`\`bash
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
-  -DSQLITE_EXPRESS_BUILD_TESTS=OFF \
-  -DSQLITE_EXPRESS_BUILD_BENCHMARKS=ON
-cmake --build build --parallel
-./build/sqlite_express_bench --scale=10
-\`\`\`
+```bash
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_EXPRESS_ENABLE_CRSQLITE=ON
+cmake --build build --parallel 2
+ctest --test-dir build --output-on-failure
+./build/benchmark --replication=on --batch-size=1
+./build/benchmark --replication=on --batch-size=100
+```
 
-You can also run the **SQLite Express benchmark (single database)** workflow
-using GitHub Actions' **Run workflow** control.
+Use `--replication=off` for a baseline without CRR tracking. The historical CI
+matrix above used the previous `sqlite_express_bench` executable and different
+settings; its measurements are retained as history and are not directly comparable
+to the current local mixed workload. The current GitHub Actions workflow runs the
+default single-connection benchmark.
 
 ## Interpretation
 
-The benchmark demonstrates that with the current SQLite DELETE-journal VFS,
+The historical CI benchmark demonstrated that with its SQLite DELETE-journal VFS,
 one connection generally delivers the highest throughput. Batched INSERTs
 are much faster than autocommit INSERTs. At 16 connections, the shared
 single-writer locking and rollback-journal contention substantially decrease

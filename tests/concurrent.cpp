@@ -60,6 +60,16 @@ int main() {
             if (sqlite3_close(db) != SQLITE_OK) ++failures;
         });
     }
+    // Change storage tuning while other connections and the flush worker write.
+    for (int i = 0; i < 6; ++i) {
+        if (!execute(mainDb, "PRAGMA rocksdb_sync=" + std::to_string(i % 2)) ||
+            !execute(mainDb, "PRAGMA rocksdb_block_cache_bytes=" + std::to_string((i % 2) * 1048576)) ||
+            !execute(mainDb, "PRAGMA rocksdb_write_buffer_size=1048576") ||
+            !execute(mainDb, "PRAGMA rocksdb_max_write_buffer_number=3") ||
+            !execute(mainDb, "PRAGMA rocksdb_max_background_jobs=3")) ++failures;
+        sqlite_express_stats snapshot{};
+        if (sqlite_express_get_stats(path.c_str(), &snapshot) != SQLITE_OK) ++failures;
+    }
     for (auto &t : workers) t.join();
     if (failures != 0) {
         std::cerr << "parallel inserts failed: " << failures << '\n';

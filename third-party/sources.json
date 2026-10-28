@@ -1,0 +1,46 @@
+[
+  {
+    "name": "sqlite",
+    "version": "3.54.1",
+    "url": "https://sqlite.org/2026/sqlite-amalgamation-3540100.zip",
+    "sha256": "0a9c8e34352dad46006aa82836d5383bff9dc6bc9ce5a60553c05aa30e6ad1f9"
+  },
+  {
+    "name": "rocksdb",
+    "version": "8.9.1",
+    "url": "https://codeload.github.com/facebook/rocksdb/tar.gz/refs/tags/v8.9.1",
+    "sha256": "c22d2097e7aa75629612fd020499bdae0d3e321c7bc4361960c42aaf9cbd6dc1"
+  },
+  {
+    "name": "zstd",
+    "version": "1.5.7",
+    "url": "https://codeload.github.com/facebook/zstd/tar.gz/refs/tags/v1.5.7",
+    "sha256": "37d7284556b20954e56e1ca85b80226768902e2edabd3b649e9e72c0c9012ee3"
+  },
+  {
+    "name": "aegis",
+    "version": "0.9.1",
+    "url": "https://codeload.github.com/aegis-aead/libaegis/tar.gz/fb173f3ea32e16c1c93c43035804ba6daf3adc59",
+    "sha256": "6b593142ddcbe412dcfdfa108c2ab3d7d62c550607b39441b4304151f32c85cd"
+  },
+  {
+    "name": "openssl",
+    "version": "3.5.9",
+    "url": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.5.9",
+    "sha256": "796831ec533bf41998eaaee9d632d921b8a69f57394fa4086ff01a941113d26d"
+  },
+  {
+    "name": "cr-sqlite",
+    "version": "0.16.3",
+    "commit": "0d62b52b4662ee1a762c9fd9264d48a91ab8df83",
+    "url": "https://codeload.github.com/vlcn-io/cr-sqlite/tar.gz/0d62b52b4662ee1a762c9fd9264d48a91ab8df83",
+    "sha256": "eff8a5ac0a43d2f65d00040d219804cdb48cae3c90105c1fc31f572d3b524783",
+    "submodule": {
+      "path": "core/rs/sqlite-rs-embedded",
+      "commit": "aba562843b26642e2242f8e3388b83a1a2625031",
+      "url": "https://codeload.github.com/vlcn-io/sqlite-rs-embedded/tar.gz/aba562843b26642e2242f8e3388b83a1a2625031",
+      "sha256": "eb95eb28ccd8e614a45508b6a81a6e17d94c4211f74d20fc17a0a5ba6936310c"
+    },
+    "cargo": "core/rs/bundle_static/Cargo.lock; locked crates in vendor/"
+  }
+]
