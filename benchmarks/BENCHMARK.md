@@ -1,13 +1,70 @@
 # SQLite Murmur benchmark results
 
-These measurements are **SQLite Murmur only**, with no comparisons to other database engines.
+The default benchmark compares encrypted, compressed sqlite-murmur against plain
+SQLite on disk and in memory, with and without local cr-sqlite change tracking.
+The older measurements below are retained as history; they are Murmur-only and
+must not be presented as measurements of the new comparison matrix.
 
-## Current 60-second mixed benchmark
+## Comparison matrix and methodology
 
-The current executable is `benchmark`: 80% random primary-key reads / 20% row
-writes, configurable rows per transaction. Local inserts use one connection;
-incoming ingestion adds a separate in-memory source connection. All library sources,
-including optional cr-sqlite, are vendored under `third-party/`.
+The `benchmark` executable runs both groups by default:
+
+| Group | Replication | Backend | Inserts/transaction |
+| --- | --- | --- | --- |
+| Test 1 | Disabled | sqlite-murmur | 1 and 100 |
+| Test 1 | Disabled | Plain SQLite disk, 1 GiB page cache | 1 and 100 |
+| Test 1 | Disabled | Plain SQLite `:memory:` | 1 and 100 |
+| Test 2 | Local cr-sqlite tracking | sqlite-murmur | 1 and 100 |
+| Test 2 | Local cr-sqlite tracking | Plain SQLite disk, 1 GiB page cache | 1 and 100 |
+| Test 2 | Local cr-sqlite tracking | Plain SQLite `:memory:` | 1 and 100 |
+
+All 12 cases use the same bundled SQLite library, schema, prepared statements,
+50,000 seeded rows, deterministic random ID generator, and fixed highly
+compressible text payload. Each case performs 80% primary-key reads / 20% inserts
+through one connection for 60 measured seconds by default. One insert and four
+reads form a group. At 1x the insert autocommits; at 100x a transaction wraps 100
+inserts and 400 interleaved reads. The last full transaction completes before
+stopping. Setup, seed persistence, and verification are outside the timer.
+Test 2 registers the table as a CRR before seeding and measures local tracking;
+it excludes network transport and incoming application.
+
+Murmur always enables encryption (AEGIS-256 by default, AES-256-GCM optional) and
+compression (Zstd3 by default). `--compression=none` is rejected, including for
+single incoming-ingestion runs. Plain SQLite opens through its native VFS and
+never enables encryption or compression. Every backend uses a 1 GiB SQLite page
+cache target in the comparison suites, which grows on demand; Murmur additionally
+uses its 64 MiB VFS cache target and 32 MiB RocksDB cache. SQLite pages default to
+4 KiB. Vendored SQLite and cr-sqlite sources live under `third-party/`.
+
+| Backend | Journal | Synchronous | Persistence |
+| --- | --- | --- | --- |
+| Murmur | DELETE | FULL | 100 ms background interval by default; final Murmur checkpoint |
+| Plain disk SQLite | WAL | NORMAL | Automatic WAL checkpoints plus final cache flush and WAL truncate checkpoint |
+| Plain memory SQLite | MEMORY | OFF | Volatile; no persistence |
+
+These policies have different commit durability guarantees. Murmur acknowledges
+commits before background persistence despite its SQLite FULL setting. WAL/NORMAL
+does not synchronize each commit. Memory throughput has no disk durability cost.
+The report gives both active throughput and throughput including final persistence;
+for memory, persistence time and disk bytes are zero.
+
+Each case emits `BENCH_CONFIG`, `BENCH_HEADER`, `BENCH_CSV`, and `BENCH_DONE`.
+CSV rows identify backend, group, replication, and batch size. Each group prints
+throughput, persistence-inclusive throughput, mean transaction latency, logical
+bytes, disk bytes, and Murmur/SQLite ratios for matching batch sizes. A ratio above
+1 means Murmur was faster in that trial. `BENCH_SUITE_DONE` confirms all requested
+cases completed. Unsupported Murmur-specific statistics are `NA` for plain SQLite.
+Disk sizes include regular storage files after close, not cumulative write traffic.
+At 1x transaction latency times just the insert; at 100x it includes interleaved
+reads. Different cases insert different numbers of rows; compare bytes per row
+alongside file sizes. Compression savings include seed data.
+
+Disk databases are reopened for row-count, integrity, and replication-change
+checks; memory databases are checked before closing. No new 60-second comparison
+measurements are recorded here yet. Use the commands below or the CI artifact to
+obtain a complete report; short smoke runs verify behavior, not performance.
+
+## Historical Murmur-only mixed results — October 28, 2026
 
 Latest incoming-replication results (October 28, 2026), using 60 seconds of
 **destination-active time**, with source generation/export/packing excluded:
@@ -25,7 +82,7 @@ row grouping or Python call overhead. Source preparation increases wall time,
 and destination flushing continues during excluded work; do not compare these
 active-time rates directly with local-insert rates below.
 
-[Incoming-ingestion methodology, disk sizes and raw reports](benchmarks/results/2026-10-28/ingest-README.md).
+[Incoming-ingestion methodology, disk sizes and raw reports](results/2026-10-28/ingest-README.md).
 
 Latest local results (October 28, 2026) with replication tracking enabled and
 the vendored cr-sqlite-2 snapshot:
@@ -46,11 +103,11 @@ separately. Every run checks exported change counts, reopening and integrity.
 Disk sizes contain different row counts. Prefer batches of 100 where transaction
 boundaries permit; small differences between trials may be normal variation.
 
-[Replacement-library comparison and raw results](benchmarks/results/2026-10-28/README.md)
+[Replacement-library comparison and raw results](results/2026-10-28/README.md)
 include the original v0.16.3 baseline. Other CPU workloads were active during these
 single paired trials; timings are provisional.
 
-[Raw before/after results and profiling summary](benchmarks/results/2026-10-27/README.md)
+[Raw before/after results and profiling summary](results/2026-10-27/README.md)
 document the three VFS optimizations and their measurement limits.
 
 ## Historical CI benchmark — October 27, 2026
@@ -94,8 +151,8 @@ hardware.
 
 ## Reproduce the current benchmark
 
-See [build prerequisites](README.md#dependencies-and-build) and
-[optional cr-sqlite setup](README.md#optional-cr-sqlite-replication). Once the
+See [build prerequisites](../README.md#dependencies-and-build) and
+[optional cr-sqlite setup](../README.md#cr-sqlite-tracking-and-ingestion-benchmarks). Once the
 pinned Rust toolchain and libclang compiler tooling are installed, builds use
 vendored sources offline:
 
@@ -103,20 +160,31 @@ vendored sources offline:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
-./build/benchmark --replication=on --batch-size=1
-./build/benchmark --replication=on --batch-size=100
+./build/benchmark                         # Both groups: 12 x 60 seconds, plus setup/checks
+./build/benchmark --suite=no-replication   # Test 1: six cases
+./build/benchmark --suite=crsqlite         # Test 2: six cases
+./build/benchmark --seconds=0.01           # Quick verification of the full matrix
+# One custom case (batch/backend/replication/ingestion overrides require single):
+./build/benchmark --suite=single --backend=sqlite-disk --replication=on --batch-size=100
+./build/benchmark --suite=single --backend=murmur --replication=on --batch-size=100
 # Incoming replication; --seconds counts destination active time:
-./build/benchmark --ingest=blob --batch-size=100
-./build/benchmark --ingest=row --batch-size=100
+./build/benchmark --suite=single --ingest=blob --batch-size=100
+./build/benchmark --suite=single --ingest=row --batch-size=100
 ```
 
-Use `--replication=off` for a baseline without CRR tracking. The historical CI
+Single mode defaults to Murmur, one insert per transaction, and replication off.
+Comparison suites require the 1 GiB SQLite page-cache target; use single mode for
+cache overrides. AES-only builds must supply `--cipher=aes256gcm` for Murmur cases.
+Builds without cr-sqlite can run `--suite=no-replication`; the default full suite
+and `--suite=crsqlite` fail clearly. See the [full option list](../README.md#benchmark).
+
+Use `--suite=no-replication` for comparisons without CRR tracking. The historical CI
 matrix above used the previous `sqlite_murmur_bench` executable and different
 settings; its measurements are retained as history and are not directly comparable
 to the current local mixed workload. The current GitHub Actions workflow runs the
-default single-connection benchmark.
+full comparison matrix, validates all 12 cases, and uploads the raw report.
 
-## Interpretation
+## Interpretation of historical results
 
 The historical CI benchmark demonstrated that with its SQLite DELETE-journal VFS,
 one connection generally delivers the highest throughput. Batched INSERTs

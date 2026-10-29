@@ -144,7 +144,7 @@ if(SQLITE_MURMUR_BUILD_BENCHMARKS)
       add_test(NAME sqlite_murmur_benchmark_smoke
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/benchmark_smoke.py
                 $<TARGET_FILE:benchmark> ${SQLITE_MURMUR_ENABLE_AEGIS256} ${SQLITE_MURMUR_ENABLE_CRSQLITE})
-      set_tests_properties(sqlite_murmur_benchmark_smoke PROPERTIES TIMEOUT 120)
+      set_tests_properties(sqlite_murmur_benchmark_smoke PROPERTIES TIMEOUT 240)
     endif()
   endif()
 endif()

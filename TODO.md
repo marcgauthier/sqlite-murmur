@@ -4,37 +4,9 @@ sqlite-murmur (encrypt/compress/rockdb) + cr-sqlite + murmur-replication (QUIC/S
     1x at 183,693/s  and 100x at 372,226/s
 
 
-
-push to github.com before moving to rust.
-
-
-Improve benchmark to show:
-
-benchmark vs plain sqlite, all benchmark for sqlite-murmur should have encryption and compression always enabled, plain sqlite will never have compression and encryption.
-   
-   test 1
-        no replication sqlite-murmur 1x and 100x transaction size
-         vs 
-        no replication sqlite on disk with 1GB page cache size. 
-         vs 
-        no replication sqlite :memory 
-
-    test 2 
-        with cr-sqlite replication sqlite-murmur 1x and 100x transaction size
-        vs 
-        with cr-sqlite replication sqlite on disk with 1GB page cache size. 
-        vs 
-        with cr-sqlite  replication sqlite :memory 
-
-       
-
-
-after the benchmark works 
-
-push to github.com before moving to rust.
-
-
 after the tests-live works 
+
+
 
 push to github.com before moving to rust.
 

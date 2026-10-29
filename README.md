@@ -58,7 +58,8 @@ settings. Supply `cipher`/`compression` in its options to apply them before
 extension metadata is created. To benchmark or use storage without replication,
 set `options.flags = SQLITE_MURMUR_OPEN_STORAGE_ONLY`; this skips both CRR and
 Murmur initialization and their metadata. Read-only opens also skip replication
-initialization. The benchmark uses this storage-only public API by default.
+initialization. Murmur benchmark connections use this storage-only public API
+and explicitly enable cr-sqlite for replication cases.
 
 A complete C application and independent installed-package CMake project are in
 [`examples/consumer`](examples/consumer). The source layout stays conventional:
@@ -257,12 +258,13 @@ rustup toolchain install nightly-2023-10-05 --profile minimal
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
-./build/benchmark --replication=on --batch-size=1
-./build/benchmark --replication=on --batch-size=100
+./build/benchmark --suite=single --replication=on --batch-size=1
+./build/benchmark --suite=single --replication=on --batch-size=100
 ```
 
-Replication defaults to **off**; `--replication=off` provides the baseline. Each
-run uses 80% reads / 20% inserts for 60 seconds, excluding seeding and verification.
+The default comparison suite runs both replication-off and replication-on groups.
+Single runs default to replication off; `--suite=single --replication=off` selects
+that baseline. Each case uses 80% reads / 20% inserts for 60 seconds, excluding seeding and verification.
 When enabled, `records` is registered as a CRR before seeding; every insert runs
 cr-sqlite triggers and maintains replication clocks. `tracked_changes` verifies
 that each timed insert can be exported through `crsql_changes`; reopening also
@@ -276,10 +278,10 @@ version-cache invalidation and reopening.
 To measure **incoming replication** with the new API, use:
 
 ```bash
-./build/benchmark --ingest=blob --batch-size=1
-./build/benchmark --ingest=blob --batch-size=100
+./build/benchmark --suite=single --ingest=blob --batch-size=1
+./build/benchmark --suite=single --ingest=blob --batch-size=100
 # Same incoming changes, applied one INSERT per change for comparison:
-./build/benchmark --ingest=row --batch-size=100
+./build/benchmark --suite=single --ingest=row --batch-size=100
 ```
 
 `--ingest=row|blob` enables replication automatically. A separate in-memory source
@@ -534,80 +536,80 @@ See `include/sqlite_murmur.h` for `sqlite_murmur_register`,
 
 ## Benchmark
 
-There is one executable: `benchmark`. It performs **80% random primary-key reads /
-20% inserts** at full speed through a single SQLite connection (autocommit by default).
-Incoming replication can instead be measured with `--ingest=row|blob`, described above.
+The `benchmark` executable runs two comparison groups: **test 1 without
+replication**, and **test 2 with local cr-sqlite change tracking**. Each group
+runs these six cases sequentially through the same bundled SQLite library:
+
+| Backend | Inserts per transaction | Encryption | Compression |
+| --- | --- | --- | --- |
+| sqlite-murmur | 1 and 100 | Always enabled | Always enabled |
+| Plain SQLite on disk, 1 GiB SQLite page-cache target | 1 and 100 | Disabled | Disabled |
+| Plain SQLite `:memory:` | 1 and 100 | Disabled | Disabled |
 
 ```bash
-./build/benchmark
-# Override settings for one run:
-./build/benchmark --seconds=60 --flush-interval-ms=10 --cache-pages=16384 \
-  --compression=none --cipher=aes256gcm --page-size=8192
+./build/benchmark                         # All 12 cases, 60 measured seconds each
+./build/benchmark --suite=no-replication   # Test 1 only
+./build/benchmark --suite=crsqlite         # Test 2 only
+./build/benchmark --seconds=0.01           # Quick matrix and integrity check
+# One configurable case:
+./build/benchmark --suite=single --backend=murmur --batch-size=100 \
+  --flush-interval-ms=10 --compression=zstd6 --cipher=aes256gcm
 ```
+
+See [benchmark methodology and historical results](benchmarks/BENCHMARK.md).
+Both comparison suites require a 1 GiB SQLite cache target, configured after page
+size selection using `PRAGMA cache_size=-1048576`; this grows on demand. Murmur
+also has a 64 MiB VFS block cache target and a 32 MiB RocksDB block cache.
 
 | Option | Default | Accepted values |
 | --- | --- | --- |
-| `--seconds` | 60 | Greater than 0, up to 3600; fractional values supported |
-| `--batch-size` | 1 | Inserts per transaction, from 1 through 1,000,000 |
-| `--flush-interval-ms` | 100 | Positive integer through 4294967295 |
-| `--cache-pages` | 16384 | Positive count of **4 KiB VFS blocks** |
-| `--sqlite-cache-kib` | 1048576 | SQLite cache target in KiB, 0 through 2147483647 |
-| `--compression` | `zstd3` | `none` or `zstd1` through `zstd22` |
-| `--cipher` | `aegis256` | `aegis256` or `aes256gcm` |
-| `--page-size` | 4096 | SQLite page size: powers of two from 512 through 65536 |
-| `--background-threads` | `auto` | Physical-core default, or 1 through 256 preparation workers |
-| `--replication` | `off` | `on` enables local cr-sqlite tracking in an enabled build |
-| `--ingest` | `local` | `local` inserts; `row` or `blob` times destination replication, enabling cr-sqlite |
+| `--suite` | `all` | `all`, `no-replication`, `crsqlite`, `single` |
+| `--seconds` | 60 per case | Greater than 0, up to 3600; fractional values supported |
+| `--backend` | `murmur` | Single mode: `murmur`, `sqlite-disk`, `sqlite-memory` |
+| `--batch-size` | 1 in single mode | Single mode: inserts per transaction, 1 through 1,000,000 |
+| `--replication` | `off` in single mode | Single mode: `off`, `on` for local tracking |
+| `--ingest` | `local` | Single mode: `local`, `row`, `blob`; incoming modes require Murmur and enable cr-sqlite |
+| `--flush-interval-ms` | 100 | Positive integer through 4294967295; Murmur only |
+| `--cache-pages` | 16384 | Positive count of 4 KiB VFS blocks; Murmur only |
+| `--sqlite-cache-kib` | 1048576 | 0 through 2147483647; nondefault values require single mode |
+| `--compression` | `zstd3` | `zstd1` through `zstd22`; Murmur only; disabling compression is rejected |
+| `--cipher` | `aegis256` | `aegis256` or `aes256gcm`; Murmur only |
+| `--page-size` | 4096 | Powers of two from 512 through 65536 |
+| `--background-threads` | `auto` | Physical-core default, or 1 through 256 preparation workers; Murmur only |
 
-The default SQLite page-cache target is **1 GiB**, configured with
-`PRAGMA cache_size=-1048576` (negative values specify KiB), equivalent to
-262,144 pages at the default 4 KiB SQLite page size. It grows on demand
-and retains decrypted SQLite pages. This setting is applied after SQLite page
-size selection, so the target stays 1 GiB across supported page sizes.
-`--sqlite-cache-kib=0` selects the previously tested zero-cache setting.
+Each fresh database starts with 50,000 rows containing a fixed, highly
+compressible payload. The timed workload performs one insert and four random
+primary-key reads per group. At 1x each insert autocommits; at 100x a transaction
+contains 100 inserts and 400 interleaved reads. Complete the final transaction
+before stopping. Setup, seeding, and verification are excluded. Incoming
+`row`/`blob` single runs instead measure destination-active time as described above.
 
-The separate VFS cache defaults to **16,384 × 4096 bytes = 64 MiB** of
-block data, plus metadata and encryption overhead. Clean entries are encrypted;
-pending write copies are plaintext. Committed backlog pressure triggers early
-persistence and backpressure; active transactions can exceed this target. RocksDB's separate 32 MiB block cache remains unchanged.
-Changing SQLite's page size does not change the VFS's 4 KiB storage block size.
+Murmur always encrypts and compresses its destination storage, defaulting to
+AEGIS-256 and Zstd3, with DELETE journaling, `synchronous=FULL`, and a 100 ms
+background persistence interval. Plain disk SQLite uses its native VFS,
+WAL journaling and `synchronous=NORMAL`, with normal automatic checkpoints.
+Its final persistence barrier flushes the page cache and truncates/checkpoints
+the WAL. Memory SQLite uses MEMORY journaling with `synchronous=OFF` and is volatile.
+These configurations have different commit durability guarantees; Murmur's FULL
+setting does not make its acknowledged commits wait for background persistence.
 
-Each run creates a fresh temporary database with 50,000 seeded rows. It then
-performs one insert and four random reads across all existing rows per group,
-without sleeps or rate limiting. With `--batch-size=1`, each insert uses autocommit.
-With larger batches, `BEGIN IMMEDIATE` / `COMMIT` wraps that many groups: a batch
-of 100 contains 100 inserts and 400 interleaved reads. The last full transaction
-finishes before stopping, preserving the exact 80/20 ratio and batch size.
+Every case emits `BENCH_CONFIG`, `BENCH_HEADER`, `BENCH_CSV`, and `BENCH_DONE`.
+CSV rows identify suite, backend, replication, and transaction size. Each group
+also prints a comparison table and Murmur-to-SQLite ratios at matching batch sizes.
+`BENCH_SUITE_DONE` marks successful completion of the entire request. Reports
+include total/read/write throughput, final persistence time and inclusive
+throughput, mean write transaction time, logical size, and total `disk_bytes`.
+Murmur-specific statistics use `NA` for plain SQLite; memory disk size and
+persistence time are zero. The 1x transaction timer covers the insert only;
+the 100x timer includes interleaved reads. Compression savings include seeding.
+Fixed-duration cases create different row counts, so compare bytes per row as well
+as total size. Disk sizes include regular database/storage files after close;
+they do not measure cumulative write traffic or allocated filesystem blocks.
 
-Compare single inserts against bulk transactions with:
-
-```bash
-./build/benchmark --batch-size=1 > batch1.txt
-./build/benchmark --batch-size=100 > batch100.txt
-```
-
-The report includes committed write transaction count and mean write transaction
-duration. For autocommit this times just the insert; for bulk transactions it
-includes BEGIN, the inserts and interleaved reads, and COMMIT. The bulk duration
-therefore also reflects how long the single-writer lock is held; it is not a
-per-insert latency. Fixed-duration runs insert different numbers of rows, so
-compare file bytes per row as well as final file size.
-
-Payloads are fixed, highly compressible 70-byte
-text. Setup and initial persistence are excluded from the timer. Background
-flushes run normally; memory pressure can also trigger early persistence.
-
-The report shows total/read/write operations per second, logical SQLite size,
-RocksDB regular-file sizes in bytes and MiB, compression selection and payload
-savings across persisted blocks (including seeding). Final persistence time and
-throughput including that time are emitted in `BENCH_CSV`, preceded by a
-`BENCH_CONFIG` line containing the actual run settings. Compression savings are
-zero when disabled. The final file size includes SST, WAL and metadata; it is
-not cumulative disk-write traffic or allocated filesystem blocks.
-
-Reopening checks row count and database integrity before deleting the temporary
-database. For a short test, use `./build/benchmark --seconds=0.01`. CI builds the
-vendored sources, runs tests, then runs and uploads one default 60-second result.
+All disk cases verify row counts and integrity after reopening; memory cases
+verify before closing. Replicated cases also verify exported change counts.
+A build without cr-sqlite can run test 1 but rejects test 2 and the default full
+suite. CI validates and uploads the full 12-case, 60-second-per-case report.
 
 The C API `sqlite_murmur_get_stats(path, &stats)` snapshots cumulative per-Store
 VFS/persistence counters and RocksDB WAL, SST-flush and compaction write counters.

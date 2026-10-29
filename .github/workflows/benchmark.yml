@@ -16,7 +16,7 @@ on:
 jobs:
   benchmark:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install build tools
@@ -39,11 +39,11 @@ jobs:
         run: cmake --build build --parallel 2
       - name: Tests
         run: ctest --test-dir build --output-on-failure
-      - name: Benchmark default settings for 60 seconds
+      - name: Benchmark both groups for 60 seconds per case
         shell: bash
         run: |
           set -o pipefail
-          timeout 180s ./build/benchmark | tee benchmark-results.txt
+          timeout 1500s ./build/benchmark | tee benchmark-results.txt
       - name: Validate benchmark report
         run: |
           python3 - <<'PY'
@@ -52,9 +52,15 @@ jobs:
           spec = importlib.util.spec_from_file_location("benchmark_smoke", "tests/benchmark_smoke.py")
           module = importlib.util.module_from_spec(spec)
           spec.loader.exec_module(module)
-          module.validate(Path("benchmark-results.txt").read_text(), 60,
-                          {"cipher": "aegis256", "flush_interval_ms": 100,
-                           "cache_pages": 16384, "sqlite_cache_size": -1048576, "compression": "zstd3", "page_size": 4096, "rocksdb_cache_bytes": 33554432})
+          output = Path("benchmark-results.txt").read_text()
+          module.validate_suite(output, 60)
+          for report in module.reports(output):
+              module.validate(report, 60, {"page_size": 4096})
+              if ",backend=murmur," in report:
+                  module.validate(report, 60,
+                                  {"cipher": "aegis256", "flush_interval_ms": 100,
+                                   "cache_pages": 16384, "sqlite_cache_size": -1048576,
+                                   "compression": "zstd3", "rocksdb_cache_bytes": 33554432})
           PY
       - uses: actions/upload-artifact@v4
         if: always()
