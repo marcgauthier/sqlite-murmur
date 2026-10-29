@@ -12,16 +12,31 @@ def digest(path):
 
 
 def files(root):
-    sources = json.loads((root / "sources.json").read_text())
-    return {str(path.relative_to(root)): path
-            for source in sources for path in (root / source["name"]).rglob("*")
-            if path.is_file() or path.is_symlink()}
+    # root is the repo root; manifest lives in third-party/. Each unit resolves
+    # under its "dir" (default "third-party"); entry names stay repo-relative.
+    sources = json.loads((root / "third-party" / "sources.json").read_text())
+    found = {str(path.relative_to(root)): path
+             for source in sources
+             for path in (root / source.get("dir", "third-party") / source["name"]).rglob("*")
+             if path.is_file() or path.is_symlink()}
+    # Cargo workspace manifest + lockfile (dependency pins stay checksummed).
+    for name in ("crates/Cargo.toml", "crates/Cargo.lock"):
+        path = root / name
+        if path.is_file():
+            found[name] = path
+    return found
 
 
-def main():
-    root = Path(__file__).resolve().parent
+def main(regenerate=False):
+    root = Path(__file__).resolve().parent.parent
+    if regenerate:
+        actual = files(root)
+        lines = sorted(f"{digest(path)}  {name}" for name, path in actual.items())
+        (root / "third-party" / "source-files.sha256").write_text("\n".join(lines) + "\n")
+        print(f"Regenerated {len(lines)} entries.")
+        return
     expected = dict(line.split("  ", 1)[::-1]
-                    for line in (root / "source-files.sha256").read_text().splitlines())
+                    for line in (root / "third-party" / "source-files.sha256").read_text().splitlines())
     actual = files(root)
     failures = [f"missing: {name}" for name in expected.keys() - actual.keys()]
     failures += [f"unexpected: {name}" for name in actual.keys() - expected.keys()]
@@ -33,4 +48,5 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    main(regenerate="--regenerate" in sys.argv[1:])

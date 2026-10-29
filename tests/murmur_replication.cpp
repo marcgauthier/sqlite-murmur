@@ -9,6 +9,8 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <chrono>
 
 // Test-only VFS shim: fail persistence after a specific incoming row commits.
 // This leaves production code free of fault injection controls.
@@ -146,7 +148,20 @@ int main(int argc,char **argv) {
         check(sqlite3_close(db),nullptr,"close");db=nullptr;
 #endif
         check(sqlite3_close(inspection),nullptr,"close inspector");inspection=nullptr;
-        check(sqlite_murmur_unregister(),nullptr,"unregister");
+        // G7 tripwire: close() is synchronous w.r.t. the maintenance
+        // thread since fix 1, so BUSY here means a real regression —
+        // retry briefly, then fail loudly. Any retry line in output
+        // is a bug report, not masking.
+        int unregisterRc = sqlite_murmur_unregister();
+        if (unregisterRc == SQLITE_BUSY) {
+            for (int attempt = 1; attempt <= 200; ++attempt) {
+                std::cerr << "sqlite_murmur_unregister: busy, retry attempt " << attempt << "/200" << std::endl;
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                unregisterRc = sqlite_murmur_unregister();
+                if (unregisterRc != SQLITE_BUSY) break;
+            }
+        }
+        check(unregisterRc,nullptr,"unregister");
         return 0;
     }catch(const std::exception &e){std::cerr<<e.what()<<std::endl;if(db)sqlite3_close(db);return 1;}
 }

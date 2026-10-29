@@ -1,0 +1,21 @@
+[package]
+name = "murmur-files"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+murmur-tx = { path = "../murmur-tx" }
+tokio = { version = "=1.54.1", features = ["rt-multi-thread"] }
+zeroize = "=1.9.1"
+serde_json = "=1.0.154"
+aes-gcm = "=0.10.3"
+hkdf = "=0.12.4"
+sha2 = "=0.10.9"
+rand = "=0.8.8"
+
+[dev-dependencies]
+tempfile = "=3.27.0"
+tokio = { version = "=1.54.1", features = ["macros"] }

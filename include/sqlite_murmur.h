@@ -35,6 +35,20 @@ typedef struct sqlite_murmur_config {
 /* Registers the VFS under the name "sqlite-murmur". */
 int sqlite_murmur_register(const sqlite_murmur_config *config);
 
+/* Provisions the group file key for murmur-files SPFO object crypto (WP-C
+ * §7a). Once per registration: a second call fails with SQLITE_MISUSE;
+ * unregister wipes the slot. `previous` may be NULL (no rotation in
+ * progress). Rotation is restart-applied: re-register with the new current
+ * key and the old one as previous. The replication layer reads the slot
+ * once at Hosts configure time; without provisioning, file actions fail
+ * closed. */
+int sqlite_murmur_register_file_key(const unsigned char current[32],
+                                    const unsigned char previous[32]);
+/* Slot readers for the replication layer. SQLITE_NOTFOUND when the
+ * respective key was never provisioned. */
+int sqlite_murmur_file_key_current(unsigned char out[32]);
+int sqlite_murmur_file_key_previous(unsigned char out[32]);
+
 /* All bundled features are statically available through this API. Configure
  * the VFS once with register(), then use these open/close functions and the
  * normal sqlite3 prepare/bind/step/exec APIs. No extension loading is needed.
@@ -65,6 +79,38 @@ int sqlite_murmur_close(sqlite3 *db);
  * In-progress transactions are never flushed. Processing runs on background
  * threads; this call waits for completion and reports any background error. */
 int sqlite_murmur_flush(const char *path);
+/* Offline repair of a store directory (never initializes a missing store).
+ * Refuses with SQLITE_BUSY when this process holds the store open, and
+ * fails when another process holds its LOCK. Stop the database first. */
+int sqlite_murmur_repair(const char *path);
+/* Offline key inventory of a store directory (WP-D F3). Temp-opens the
+ * store STORAGE_ONLY read-only (register the master first; no replication,
+ * no mutation) and serializes the live ring opened at start. *json_out
+ * receives sqlite3_malloc'd JSON the caller frees with sqlite3_free():
+ * {"sealed":false} when no envelope exists, else {sealed,seq,kdf,
+ * kdf_time,kdf_memory_kib,kdf_threads,wrap_id,current,keys:[{id,
+ * created_nanos,active}]} -- never key bytes, enforced by construction.
+ * SQLITE_BUSY when this process holds the store open; SQLITE_CANTOPEN
+ * when missing or when another process holds its LOCK. Stop live users
+ * first; CLI callers pre-probe the LOCK for the clean message. */
+int sqlite_murmur_key_inventory(const char *path, char **json_out);
+
+/* Options for offline store rekeying (WP-D G2). */
+typedef struct sqlite_murmur_rekey_options {
+    int fault_after_pages; /* 0 for normal run; >0 simulates crash by failing after N pages written */
+} sqlite_murmur_rekey_options;
+
+/* Offline full store rekey (WP-D G2). Rewrites all page records to a fresh
+ * data key under a new envelope sealed by new_master, then swaps meta:keyring.
+ * Forward-only crash-safe protocol: retrying with the same old+new pair resumes
+ * and completes.
+ * Returns SQLITE_OK on success; SQLITE_BUSY if held open; SQLITE_CANTOPEN if
+ * missing or not a database; SQLITE_AUTH if old_master cannot unlock the envelope;
+ * SQLITE_ERROR if database is unsealed (seal first); SQLITE_IOERR on write failure. */
+int sqlite_murmur_rekey(const char *path,
+                        const unsigned char old_master[32],
+                        const unsigned char new_master[32],
+                        const sqlite_murmur_rekey_options *opts);
 
 /* Cumulative diagnostics for one open Store. Counters reset on reopen.
  * Compression/record counters include only successfully persisted page versions.
@@ -102,6 +148,36 @@ int sqlite_murmur_unregister(void);
  * Only one handler may be installed per handle. */
 #define SQLITE_MURMUR_FCNTL_EXTENSION 0x535801
 #define SQLITE_MURMUR_FCNTL_FLUSH 0x535802
+#define SQLITE_MURMUR_FCNTL_BACKUP 0x535803
+#define SQLITE_MURMUR_FCNTL_COMPACT 0x535804
+#define SQLITE_MURMUR_FCNTL_KEYRING 0x535805
+/* Keyring control block (WP-D slice D2a). Issued via sqlite3_file_control
+ * on "main" with the opcode above; arg must point at this struct.
+ * GET reads header/staged params; SET stages one param, except KDF which
+ * seals the envelope immediately (write-once); INVENTORY returns non-secret
+ * JSON in json (sqlite3_malloc; caller frees with sqlite3_free, NULL on
+ * error). Field order is ABI: the Rust repr(C) mirror in
+ * crates/murmur-replication/src/sql.rs must match exactly. */
+#define SQLITE_MURMUR_KEYRING_GET 1
+#define SQLITE_MURMUR_KEYRING_SET 2
+#define SQLITE_MURMUR_KEYRING_INVENTORY 3
+#define SQLITE_MURMUR_KEYRING_ROTATE 4
+#define SQLITE_MURMUR_KEYRING_PRUNE 5
+#define SQLITE_MURMUR_KEYRING_PARAM_KDF 1
+#define SQLITE_MURMUR_KEYRING_PARAM_TIME 2
+#define SQLITE_MURMUR_KEYRING_PARAM_MEMORY 3
+#define SQLITE_MURMUR_KEYRING_PARAM_THREADS 4
+typedef struct sqlite_murmur_keyring_args {
+    int op;
+    int param;
+    unsigned long long value;
+    int sealed;
+    unsigned kdf;
+    unsigned time;
+    unsigned memory_kib;
+    unsigned threads;
+    char *json;
+} sqlite_murmur_keyring_args;
 typedef struct sqlite_murmur_extension {
     void *context;
     int (*pragma)(void *context, const char *name, const char *value, char **result);

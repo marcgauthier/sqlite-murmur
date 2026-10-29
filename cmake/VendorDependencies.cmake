@@ -12,7 +12,7 @@ set(_vendor_build "${PROJECT_BINARY_DIR}/third-party")
 
 # SQLite's amalgamation includes its core and needs only platform libraries.
 add_library(sqlite_murmur_sqlite STATIC "${_vendor}/sqlite/sqlite3.c")
-target_compile_definitions(sqlite_murmur_sqlite PRIVATE SQLITE_THREADSAFE=1)
+target_compile_definitions(sqlite_murmur_sqlite PRIVATE SQLITE_THREADSAFE=1 SQLITE_ENABLE_FTS5)
 target_include_directories(sqlite_murmur_sqlite PUBLIC "${_vendor}/sqlite")
 target_link_libraries(sqlite_murmur_sqlite PUBLIC Threads::Threads ${CMAKE_DL_LIBS})
 if(UNIX)

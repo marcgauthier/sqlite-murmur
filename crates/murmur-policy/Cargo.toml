@@ -1,0 +1,13 @@
+[package]
+name = "murmur-policy"
+version = "1.0.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[dependencies]
+murmur-tx = { path = "../murmur-tx" }
+serde = { version = "=1.0.229", features = ["derive"] }
+thiserror = "=2.0.21"
+postcard = { version = "=1.1.3", features = ["alloc"] }

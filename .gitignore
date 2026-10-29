@@ -1,4 +1,5 @@
 /build/
+/crates/target/
 /out/
 /.cache/
 *.o

@@ -13,8 +13,10 @@ for tests remain build prerequisites.
 | `zstd/` | 1.5.7 | VFS compression before encryption | BSD-3-Clause / GPL-2.0 alternatives; see `zstd/LICENSE`, `zstd/COPYING` |
 | `aegis/` | 0.9.1 | AEGIS-256 authenticated encryption | MIT; see `aegis/LICENSE` |
 | `cr-sqlite/` | cr-sqlite-2 local snapshot | Optional CRR replication, pinned Rust submodule and locked Cargo crates | MIT; see `cr-sqlite/LICENSE` and individual crate licenses |
-| `murmur-replication/` | 0.1.0 local adaptation | Optional Rust QUIC/SWIM/gossip replication extension with a SQLite-only client interface | See `murmur-replication/PROVENANCE.md` and vendored crate licenses |
 | `openssl/` | 3.5.9 LTS | AES-256-GCM, cryptographic randomness and memory cleansing | Apache-2.0; see `openssl/LICENSE.txt` and upstream notices |
+
+First-party Rust crates live in `../crates/` (workspace `../crates/Cargo.toml`),
+not here; only their upstream archive provenance is recorded in `sources.json`.
 
 AES-256-GCM is supplied by OpenSSL; there is no separate handwritten AES library.
 OpenSSL's normal static default provider is built in, so no external provider
@@ -62,7 +64,7 @@ branch is followed automatically during configure or build.
 
 ## Murmur replication
 
-`murmur-replication/` adapts the user-provided Murmur archive at commit
+`../crates/murmur-replication/` adapts the user-provided Murmur archive at commit
 `e5a19c25cceaf93375872e3a7f01f05ffc3659ac`. It retains the transport and membership
 logic and replaces Spool synchronization with cr-sqlite batches and ordinary
 SQLite metadata tables. See its PROVENANCE.md for source attribution and its

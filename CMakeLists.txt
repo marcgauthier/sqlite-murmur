@@ -24,7 +24,7 @@ if(SQLITE_MURMUR_ENABLE_CRSQLITE)
   include(cmake/CrSqlite.cmake)
 endif()
 
-add_library(sqlite_murmur STATIC src/sqlite_murmur.cpp src/sqlite_murmur_api.cpp)
+add_library(sqlite_murmur STATIC src/sqlite_murmur.cpp src/sqlite_murmur_api.cpp src/sqlite_murmur_errors.cpp src/sqlite_murmur_backup.cpp src/sqlite_murmur_keyring.cpp)
 add_library(sqlite_murmur::sqlite_murmur ALIAS sqlite_murmur)
 target_include_directories(sqlite_murmur
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
@@ -74,7 +74,7 @@ if(SQLITE_MURMUR_BUILD_TESTS)
   add_executable(sqlite_murmur_concurrent_test tests/concurrent.cpp)
   target_link_libraries(sqlite_murmur_concurrent_test PRIVATE sqlite_murmur)
   add_test(NAME sqlite_murmur_concurrent COMMAND sqlite_murmur_concurrent_test)
-  add_executable(sqlite_murmur_storage_test tests/storage_concurrency.cpp)
+  add_executable(sqlite_murmur_storage_test tests/storage_concurrency.cpp src/sqlite_murmur_backup.cpp src/sqlite_murmur_keyring.cpp src/sqlite_murmur_api.cpp)
   target_include_directories(sqlite_murmur_storage_test PRIVATE include)
   target_link_libraries(sqlite_murmur_storage_test PRIVATE
     sqlite_murmur_sqlite sqlite_murmur_crypto rocksdb libzstd_static Threads::Threads ${CMAKE_DL_LIBS})
@@ -84,6 +84,26 @@ if(SQLITE_MURMUR_BUILD_TESTS)
   endif()
   add_test(NAME sqlite_murmur_storage_concurrency COMMAND sqlite_murmur_storage_test)
   set_tests_properties(sqlite_murmur_storage_concurrency PROPERTIES TIMEOUT 120)
+  add_executable(sqlite_murmur_errors_test tests/errors.cpp)
+  target_link_libraries(sqlite_murmur_errors_test PRIVATE sqlite_murmur)
+  add_test(NAME sqlite_murmur_errors COMMAND sqlite_murmur_errors_test)
+  add_executable(sqlite_murmur_backup_test tests/backup.cpp)
+  target_link_libraries(sqlite_murmur_backup_test PRIVATE sqlite_murmur rocksdb)
+  add_test(NAME sqlite_murmur_backup COMMAND sqlite_murmur_backup_test)
+  add_executable(sqlite_murmur_keyring_test tests/keyring.cpp)
+  target_link_libraries(sqlite_murmur_keyring_test PRIVATE sqlite_murmur)
+  add_test(NAME sqlite_murmur_keyring COMMAND sqlite_murmur_keyring_test)
+  # murmur-admin offline CLI (WP-D D3a) + in-process suite. Built with tests
+  # so ctest gates it; install wiring follows with the D2 keys subcommand.
+  add_executable(murmur-admin tools/murmur-admin/main.cpp tools/murmur-admin/admin.cpp)
+  target_link_libraries(murmur-admin PRIVATE sqlite_murmur sqlite_murmur_crsqlite_static
+    $<$<BOOL:${SQLITE_MURMUR_ENABLE_AEGIS256}>:aegis> Threads::Threads)
+  target_compile_options(murmur-admin PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_executable(murmur-admin-tests tools/murmur-admin/tests/admin.cpp tools/murmur-admin/admin.cpp)
+  target_link_libraries(murmur-admin-tests PRIVATE sqlite_murmur sqlite_murmur_crsqlite_static rocksdb
+    $<$<BOOL:${SQLITE_MURMUR_ENABLE_AEGIS256}>:aegis> Threads::Threads)
+  target_compile_options(murmur-admin-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  add_test(NAME murmur_admin COMMAND murmur-admin-tests)
 endif()
 
 if(SQLITE_MURMUR_ENABLE_MURMUR)
@@ -135,7 +155,7 @@ endif()
 
 install(TARGETS sqlite_murmur EXPORT sqlite_murmurTargets
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
-install(FILES include/sqlite_murmur.h third-party/sqlite/sqlite3.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES include/sqlite_murmur.h include/sqlite_murmur_errors.h include/sqlite_murmur_subscribe.h include/sqlite_murmur_backup.h include/sqlite_murmur_keyring.h third-party/sqlite/sqlite3.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT sqlite_murmurTargets
   NAMESPACE sqlite_murmur:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sqlite_murmur)
 

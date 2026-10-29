@@ -1,4 +1,6 @@
 #include "sqlite_murmur.h"
+#include "sqlite_murmur_backup.h"
+#include "sqlite_murmur_keyring.h"
 
 #include <rocksdb/db.h>
 #include <rocksdb/cache.h>
@@ -45,8 +47,17 @@ constexpr size_t kBlock = 4096;
 constexpr size_t kNonce = 12;
 constexpr size_t kTag = 16;
 constexpr char kHeader[] = "EXP1";
+constexpr char kHeader3[] = "EXP3";
+constexpr char kHeader4[] = "EXP4";
 constexpr char kMetaSize[] = "meta:size";
 constexpr char kMetaCipher[] = "meta:cipher";
+// WP-D slice D2a: keys.enc v3 envelope bytes (verbatim) + the 16-byte store
+// id it binds to. Both are plaintext meta keys (readable pre-key, like
+// meta:cipher); the envelope carries its own authentication. Absent
+// meta:keyring selects the legacy raw-registered-key path.
+constexpr char kMetaKeyring[] = "meta:keyring";
+constexpr char kMetaKeyringRekey[] = "meta:keyring.REKEY";
+constexpr char kMetaStoreId[] = "meta:store_id";
 enum class Cipher { AES256GCM, AEGIS256 };
 
 const char *cipherName(Cipher cipher) {
@@ -312,11 +323,93 @@ std::array<unsigned char, 13> aegisAAD(uint64_t page, unsigned char flag) {
     }
     return aad;
 }
+// D2b: EXP4 extends the EXP2 AAD with the key id tail (ruling P).
+std::array<unsigned char, 17> aegisAAD4(uint64_t page, unsigned char flag, uint32_t keyId) {
+    std::array<unsigned char, 17> aad{'E', 'X', 'P', '4', flag};
+    for (int i = 12; i >= 5; --i) {
+        aad[i] = static_cast<unsigned char>(page & 0xff);
+        page >>= 8;
+    }
+    for (int i = 0; i < 4; ++i)
+        aad[13 + i] = static_cast<unsigned char>((keyId >> (8 * i)) & 0xff);
+    return aad;
+}
 #endif
+
+// D2b keyed-AES twins (defined below, beside decryptAES).
+bool encryptAESKeyed(const unsigned char key[32], uint32_t keyId, uint64_t page,
+                     const unsigned char *data, size_t n, bool compressed,
+                     std::string &result);
+bool decryptAESKeyed(const unsigned char key[32], uint64_t page,
+                     const std::string &record, Block &out, DecodeWorkspace &workspace);
+
+// D2b: peek the key id of a keyed (EXP3/EXP4) record. Returns true with
+// id set (0 allowed; the caller rejects it) when the magic + minimum
+// size check out. Returns false for legacy EXP1/EXP2 records (bounds
+// checked) AND for corrupt records; callers route false through the
+// legacy trial chain, which fails closed on garbage.
+bool recordKeyId(const std::string &record, uint32_t &id) {
+    if (record.size() < 4) return false;
+    const bool exp3 = std::memcmp(record.data(), kHeader3, 4) == 0;
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
+    const bool exp4 = std::memcmp(record.data(), kHeader4, 4) == 0;
+#else
+    const bool exp4 = false;
+#endif
+    if (!exp3 && !exp4) return false;
+    constexpr size_t kMinKeyedAES = 4 + 1 + 4 + kNonce + kTag;
+    if (exp3 && record.size() < kMinKeyedAES) return false;
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
+    const size_t kMinKeyedAEGIS = 4 + 1 + 4 + aegis256_NPUBBYTES + aegis256_ABYTES_MAX;
+    if (exp4 && record.size() < kMinKeyedAEGIS) return false;
+#endif
+    id = 0;
+    for (int i = 3; i >= 0; --i)
+        id = (id << 8) | static_cast<unsigned char>(record[5 + i]);
+    return true;
+}
+
+// D2b: positively-identified unkeyed (EXP1/EXP2) records. Same magic +
+// minimum-size checks the decrypt paths enforce, so anything this
+// rejects is undecodable (fails decrypt identically with or without a
+// prune) rather than silently unkeyed.
+bool isLegacyRecord(const std::string &record) {
+    if (record.size() < 4) return false;
+    constexpr size_t kMinAES = 4 + 1 + kNonce + kTag;
+    if (std::memcmp(record.data(), kHeader, 4) == 0)
+        return record.size() >= kMinAES;
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
+    const size_t kMinAEGIS = 5 + aegis256_NPUBBYTES + aegis256_ABYTES_MAX;
+    if (std::memcmp(record.data(), "EXP2", 4) == 0)
+        return record.size() >= kMinAEGIS;
+#endif
+    return false;
+}
 
 bool encrypt(Cipher cipher, const unsigned char key[32], uint64_t page,
              const unsigned char *data, size_t n, bool compressed,
-             std::string &result) {
+             std::string &result, uint32_t keyId) {
+    if (keyId != 0) {
+        if (cipher == Cipher::AES256GCM)
+            return encryptAESKeyed(key, keyId, page, data, n, compressed, result);
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
+        unsigned char nonce[aegis256_NPUBBYTES];
+        if (RAND_bytes(nonce, sizeof(nonce)) != 1) return false;
+        const auto aad = aegisAAD4(page, compressed ? 1 : 0, keyId);
+        result.assign(kHeader4, 4);
+        result.push_back(compressed ? '\1' : '\0');
+        for (int i = 0; i < 4; ++i)
+            result.push_back(static_cast<char>((keyId >> (8 * i)) & 0xff));
+        result.append(reinterpret_cast<const char *>(nonce), sizeof(nonce));
+        const size_t offset = result.size();
+        result.resize(offset + n + aegis256_ABYTES_MAX);
+        auto *out = reinterpret_cast<unsigned char *>(&result[offset]);
+        if (aegis256_encrypt(out, aegis256_ABYTES_MAX, data, n,
+                             aad.data(), aad.size(), nonce, key) == 0) return true;
+        result.clear();
+#endif
+        return false;
+    }
     if (cipher == Cipher::AES256GCM)
         return encryptAES(key, page, data, n, compressed, result);
 #ifdef SQLITE_MURMUR_HAS_AEGIS256
@@ -336,11 +429,144 @@ bool encrypt(Cipher cipher, const unsigned char key[32], uint64_t page,
     return false;
 }
 
+// WP-D slice D2b: key-id record twins. EXP3/EXP4 extend EXP1/EXP2 with a
+// u32le key id after the flag, covered by the AAD (ruling P). The legacy
+// functions above are byte-identical and untouched; new code routes here
+// by magic. Unknown magic fails closed (single-version store, no forward
+// compat — ruling Q).
+bool encryptAESKeyed(const unsigned char key[32], uint32_t keyId, uint64_t page,
+             const unsigned char *data, size_t n, bool compressed,
+             std::string &result) {
+    if (keyId == 0 || n > static_cast<size_t>(std::numeric_limits<int>::max())) return false;
+    std::array<unsigned char, 13> aad{};
+    aad[0] = compressed ? 1 : 0;
+    for (int i = 8; i >= 1; --i) {
+        aad[i] = static_cast<unsigned char>(page & 0xff);
+        page >>= 8;
+    }
+    for (int i = 0; i < 4; ++i)
+        aad[9 + i] = static_cast<unsigned char>((keyId >> (8 * i)) & 0xff);
+    unsigned char nonce[kNonce];
+    if (RAND_bytes(nonce, sizeof(nonce)) != 1) return false;
+    result.assign(kHeader3, 4);
+    result.push_back(compressed ? '\1' : '\0');
+    for (int i = 0; i < 4; ++i)
+        result.push_back(static_cast<char>((keyId >> (8 * i)) & 0xff));
+    result.append(reinterpret_cast<const char *>(nonce), sizeof(nonce));
+    const size_t offset = result.size();
+    result.resize(offset + n + kTag);
+    auto *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return false;
+    bool ok = false;
+    do {
+        int count = 0, final_count = 0;
+        if (EVP_EncryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, kNonce, nullptr) != 1) break;
+        if (EVP_EncryptInit_ex(ctx, nullptr, nullptr, key, nonce) != 1) break;
+        if (EVP_EncryptUpdate(ctx, nullptr, &count, aad.data(), aad.size()) != 1) break;
+        if (EVP_EncryptUpdate(ctx, reinterpret_cast<unsigned char *>(&result[offset]),
+                              &count, data, static_cast<int>(n)) != 1) break;
+        if (EVP_EncryptFinal_ex(ctx, reinterpret_cast<unsigned char *>(&result[offset]) + count,
+                                &final_count) != 1) break;
+        if (static_cast<size_t>(count + final_count) != n) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_GET_TAG, kTag,
+                                &result[offset + n]) != 1) break;
+        ok = true;
+    } while (false);
+    EVP_CIPHER_CTX_free(ctx);
+    if (!ok) result.clear();
+    return ok;
+}
+
+bool decryptAESKeyed(const unsigned char key[32], uint64_t page,
+             const std::string &record, Block &out, DecodeWorkspace &workspace) {
+    if (record.size() < 4 + 1 + 4 + kNonce + kTag ||
+        std::memcmp(record.data(), kHeader3, 4) != 0) return false;
+    const unsigned char flag = static_cast<unsigned char>(record[4]);
+    if (flag > 1) return false;
+    uint32_t keyId = 0;
+    for (int i = 3; i >= 0; --i) keyId = (keyId << 8) | static_cast<unsigned char>(record[5 + i]);
+    const size_t payloadSize = record.size() - 4 - 1 - 4 - kNonce - kTag;
+    if (payloadSize > ZSTD_compressBound(kBlock)) return false;
+    std::array<unsigned char, 13> aad{};
+    aad[0] = flag;
+    uint64_t n = page;
+    for (int i = 8; i >= 1; --i) {
+        aad[i] = static_cast<unsigned char>(n & 0xff);
+        n >>= 8;
+    }
+    for (int i = 0; i < 4; ++i)
+        aad[9 + i] = static_cast<unsigned char>((keyId >> (8 * i)) & 0xff);
+    const auto *nonce = reinterpret_cast<const unsigned char *>(record.data() + 9);
+    const auto *cipher = reinterpret_cast<const unsigned char *>(record.data() + 9 + kNonce);
+    auto &plain = workspace.plain;
+    workspace.plainUsed = payloadSize + 1;
+    PlainWiper wiper{workspace};
+    auto *ctx = EVP_CIPHER_CTX_new();
+    if (!ctx) return false;
+    bool ok = false;
+    do {
+        int count = 0, final_count = 0;
+        if (EVP_DecryptInit_ex(ctx, EVP_aes_256_gcm(), nullptr, nullptr, nullptr) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_IVLEN, kNonce, nullptr) != 1) break;
+        if (EVP_DecryptInit_ex(ctx, nullptr, nullptr, key, nonce) != 1) break;
+        if (EVP_DecryptUpdate(ctx, nullptr, &count, aad.data(), aad.size()) != 1) break;
+        if (EVP_DecryptUpdate(ctx, plain.data(), &count, cipher,
+                              static_cast<int>(payloadSize)) != 1) break;
+        if (EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_GCM_SET_TAG, kTag,
+               const_cast<char *>(record.data() + record.size() - kTag)) != 1) break;
+        if (EVP_DecryptFinal_ex(ctx, plain.data() + count, &final_count) != 1) break;
+        if (static_cast<size_t>(count + final_count) != payloadSize) break;
+        if (flag == 0) {
+            if (payloadSize != kBlock) break;
+            std::memcpy(out.data(), plain.data(), kBlock);
+        } else {
+            if (!workspace.decompress(out, payloadSize)) break;
+        }
+        ok = true;
+    } while (false);
+    EVP_CIPHER_CTX_free(ctx);
+    return ok;
+}
+
 bool decrypt(Cipher cipher, const unsigned char key[32], uint64_t page,
              const std::string &record, Block &out, DecodeWorkspace &workspace) {
     workspace.blockDirty = true;
-    if (cipher == Cipher::AES256GCM) return decryptAES(key, page, record, out, workspace);
+    // D2b: magic dispatch. Unknown magic fails closed in the callee's
+    // memcmp (single-version store, no forward compat — ruling Q).
+    if (cipher == Cipher::AES256GCM) {
+        if (record.size() >= 4 && std::memcmp(record.data(), kHeader3, 4) == 0)
+            return decryptAESKeyed(key, page, record, out, workspace);
+        return decryptAES(key, page, record, out, workspace);
+    }
 #ifdef SQLITE_MURMUR_HAS_AEGIS256
+    if (record.size() >= 4 && std::memcmp(record.data(), kHeader4, 4) == 0) {
+        constexpr size_t overhead4 = 9 + aegis256_NPUBBYTES + aegis256_ABYTES_MAX;
+        if (record.size() < overhead4) return false;
+        const auto flag4 = static_cast<unsigned char>(record[4]);
+        uint32_t keyId4 = 0;
+        for (int i = 3; i >= 0; --i)
+            keyId4 = (keyId4 << 8) | static_cast<unsigned char>(record[5 + i]);
+        const size_t payloadSize4 = record.size() - overhead4;
+        if (flag4 > 1 || payloadSize4 > ZSTD_compressBound(kBlock)) return false;
+        const auto aad4 = aegisAAD4(page, flag4, keyId4);
+        const auto *nonce4 = reinterpret_cast<const unsigned char *>(record.data() + 9);
+        const auto *data4 = nonce4 + aegis256_NPUBBYTES;
+        auto &plain4 = workspace.plain;
+        workspace.plainUsed = payloadSize4 + 1;
+        PlainWiper wiper4{workspace};
+        bool ok4 = aegis256_decrypt(plain4.data(), data4, payloadSize4 + aegis256_ABYTES_MAX,
+                                    aegis256_ABYTES_MAX, aad4.data(), aad4.size(), nonce4, key) == 0;
+        if (ok4) {
+            if (flag4 == 0) {
+                ok4 = payloadSize4 == kBlock;
+                if (ok4) std::memcpy(out.data(), plain4.data(), kBlock);
+            } else {
+                ok4 = workspace.decompress(out, payloadSize4);
+            }
+        }
+        return ok4;
+    }
     constexpr size_t overhead = 5 + aegis256_NPUBBYTES + aegis256_ABYTES_MAX;
     if (record.size() < overhead || std::memcmp(record.data(), "EXP2", 4) != 0)
         return false;
@@ -485,7 +711,30 @@ struct Store {
     std::mutex mutationMu;
     std::mutex mu;
     std::mutex flushMu;
+    // Leaf serializing online backups: held across the whole checkpoint so
+    // two same-dest backups cannot interleave check-then-remove (the loser
+    // must never delete the winner's artifact). Never nested with other
+    // Store locks.
+    std::mutex backupMu;
     uint64_t generation = 0;
+    // WP-D slice D2a keyring state. settings.key stays the registered
+    // master forever; activeKey (valid iff sealed) drives page crypto once
+    // the envelope exists. Pre-seal pages stay master-encrypted until a
+    // flush rewrites them (lazy migration); decrypt falls back to retired
+    // keys, then the master. The ring + activeKey install once under mu
+    // with a generation bump: writers/flush are excluded by mutationMu /
+    // flushMu, and lock-free readers either acquire mu after the install
+    // (sees it) or trip the generation retry. D2b online rotation follows
+    // the same install discipline.
+    sqlite_murmur_keyring keyring{};
+    bool keyringSealed = false;
+    std::array<unsigned char, 32> activeKey{};
+    std::array<unsigned char, 16> keyringStoreId{};
+    // Staged KDF params (pre-seal pragma writes; archive defaults).
+    std::uint8_t stagedKdf = SQLITE_MURMUR_KDF_DIRECT_HKDF;
+    std::uint32_t stagedTime = 3;
+    std::uint32_t stagedMemoryKib = 65536;
+    std::uint8_t stagedThreads = 4;
     size_t cleanCount = 0;
     std::shared_ptr<RecordPool> recordPool = std::make_shared<RecordPool>();
     std::shared_ptr<WorkspacePool> workspacePool = std::make_shared<WorkspacePool>();
@@ -545,6 +794,8 @@ struct Store {
         if (worker.joinable()) worker.join();
         // The coordinator drains committed copies before exiting.
         encoders.reset();
+        sqlite_murmur_keyring_destroy(keyring);
+        OPENSSL_cleanse(activeKey.data(), activeKey.size());
         OPENSSL_cleanse(settings.key.data(), settings.key.size());
     }
 
@@ -582,6 +833,46 @@ struct Store {
 #endif
             else return false;
         } else if (!cipherStatus.IsNotFound()) return false;
+        // WP-D slice D2a: open the keys.enc envelope when present. The
+        // registered key becomes the KDF master; the envelope's active data
+        // key replaces it for page crypto. Any failure fails closed (the
+        // caller maps it to SQLITE_CANTOPEN, like a cipher mismatch).
+        value.clear();
+        const auto keyringStatus = db->Get(rocksdb::ReadOptions(), kMetaKeyring, &value);
+        if (keyringStatus.ok()) {
+            std::string storeId;
+            const auto idStatus = db->Get(rocksdb::ReadOptions(), kMetaStoreId, &storeId);
+            if (!idStatus.ok() || storeId.size() != keyringStoreId.size()) return false;
+            // Archive parity: fresh stores seal context = store_id, so the
+            // single meta key feeds both bindings (spool store.rs).
+            const auto *binding = reinterpret_cast<const unsigned char *>(storeId.data());
+            sqlite_murmur_keyring ring;
+            const int keyringRc = sqlite_murmur_keyring_open(
+                reinterpret_cast<const unsigned char *>(value.data()), value.size(),
+                settings.key.data(), nullptr, binding, binding, ring);
+            if (keyringRc != SQLITE_OK) {
+                sqlite_murmur_keyring_destroy(ring);
+                return false;
+            }
+            std::uint32_t activeId = 0;
+            const unsigned char *active = sqlite_murmur_keyring_current(ring, activeId);
+            if (!active) {
+                sqlite_murmur_keyring_destroy(ring);
+                return false;
+            }
+            // Snapshot the active key BEFORE destroying the staging ring
+            // (`active` points into ring storage that destroy wipes).
+            std::array<unsigned char, 32> fresh{};
+            std::memcpy(fresh.data(), active, fresh.size());
+            std::memcpy(keyringStoreId.data(), storeId.data(), keyringStoreId.size());
+            keyring = ring;
+            sqlite_murmur_keyring_destroy(ring);
+            // The master stays in settings.key (permanent fallback for
+            // pre-seal pages); the active data key takes over page crypto.
+            activeKey = fresh;
+            OPENSSL_cleanse(fresh.data(), fresh.size());
+            keyringSealed = true;
+        } else if (!keyringStatus.IsNotFound()) return false;
         lastCommittedSize = size;
         encoders = std::make_unique<EncodingPool>(settings.backgroundThreads);
         worker = std::thread([this] {
@@ -630,6 +921,492 @@ struct Store {
         std::lock_guard<std::mutex> guard(mu);
         settings.cipher = cipher;
         ++generation;
+        return SQLITE_OK;
+    }
+
+    // WP-D slice D2b: point-in-time key snapshot. decryptPage never
+    // touches the live ring: read() copies under mu (a raced install
+    // heals via the generation retry), while persist()/loadForMutation()
+    // copy where seal/rotate are already excluded by flushMu/mutationMu.
+    // RAII-wiped: every copy destroys its own key bytes.
+    struct PageKeys {
+        unsigned char page[32]{};
+        unsigned char master[32]{};
+        unsigned char active[32]{};
+        uint32_t current = 0;
+        bool sealed = false;
+        std::vector<std::pair<uint32_t, std::array<unsigned char, 32>>> retired;
+        ~PageKeys() {
+            OPENSSL_cleanse(page, sizeof(page));
+            OPENSSL_cleanse(master, sizeof(master));
+            OPENSSL_cleanse(active, sizeof(active));
+            for (auto &r : retired) OPENSSL_cleanse(r.second.data(), r.second.size());
+        }
+    };
+    PageKeys snapshotPageKeys() const {
+        PageKeys snap;
+        snap.sealed = keyringSealed;
+        std::memcpy(snap.master, settings.key.data(), sizeof(snap.master));
+        if (keyringSealed) {
+            std::memcpy(snap.active, activeKey.data(), sizeof(snap.active));
+            std::memcpy(snap.page, activeKey.data(), sizeof(snap.page));
+            snap.current = keyring.current;
+            for (const auto &entry : keyring.keys) {
+                if (entry.active) continue;
+                std::array<unsigned char, 32> material{};
+                std::memcpy(material.data(), entry.key, material.size());
+                snap.retired.emplace_back(entry.id, material);
+                OPENSSL_cleanse(material.data(), material.size());
+            }
+        } else {
+            std::memcpy(snap.page, settings.key.data(), sizeof(snap.page));
+        }
+        return snap;
+    }
+
+    // WP-D slices D2a+D2b: keyed (EXP3/EXP4) records take the direct-id
+    // path — unknown or zero id fails closed with NO trial backstop
+    // (ruling Q; trial would mask corruption). Legacy records keep the
+    // trial chain (page key, then retired ring keys, then the registered
+    // master for pre-seal pages). decrypt() fully rewrites `out` on
+    // success, so retries are safe; GCM fails closed on a wrong key,
+    // so fallback can never misread.
+    static bool decryptPage(Cipher cipher, uint64_t page, const std::string &record,
+                            Block &out, DecodeWorkspace &workspace, const PageKeys &keys) {
+        uint32_t id = 0;
+        if (recordKeyId(record, id)) {
+            if (id == 0) return false;
+            const unsigned char *direct = nullptr;
+            if (keys.sealed && id == keys.current) direct = keys.active;
+            if (!direct) {
+                for (const auto &entry : keys.retired) {
+                    if (entry.first == id) {
+                        direct = entry.second.data();
+                        break;
+                    }
+                }
+            }
+            if (!direct) return false;
+            return decrypt(cipher, direct, page, record, out, workspace);
+        }
+        if (decrypt(cipher, keys.page, page, record, out, workspace)) return true;
+        if (!keys.sealed) return false;
+        for (const auto &entry : keys.retired) {
+            if (decrypt(cipher, entry.second.data(), page, record, out, workspace)) return true;
+        }
+        return decrypt(cipher, keys.master, page, record, out, workspace);
+    }
+
+    static std::string jsonEscape(const std::string &in) {
+        static const char *hex = "0123456789abcdef";
+        std::string out;
+        for (char c : in) {
+            switch (c) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default: {
+                    const auto u = static_cast<unsigned char>(c);
+                    if (u < 0x20) {
+                        out += "\\u00";
+                        out += hex[(u >> 4) & 15];
+                        out += hex[u & 15];
+                    } else out += c;
+                }
+            }
+        }
+        return out;
+    }
+
+    // WP-D slice D2a keyring control (FCTL 0x535805). Lock order mirrors
+    // setCipher: mutationMu -> flushMu -> mu; IO/crypto run without mu.
+    int keyringControl(sqlite_murmur_keyring_args *args, bool readOnly) {
+        if (!args) return SQLITE_MISUSE;
+        if (args->op == SQLITE_MURMUR_KEYRING_GET) {
+            std::lock_guard<std::mutex> guard(mu);
+            args->sealed = keyringSealed ? 1 : 0;
+            if (keyringSealed) {
+                args->kdf = keyring.kdf;
+                args->time = keyring.argon_time;
+                args->memory_kib = keyring.argon_memory_kib;
+                args->threads = keyring.argon_threads;
+            } else {
+                args->kdf = stagedKdf;
+                args->time = stagedTime;
+                args->memory_kib = stagedMemoryKib;
+                args->threads = stagedThreads;
+            }
+            args->json = nullptr;
+            return SQLITE_OK;
+        }
+        if (args->op == SQLITE_MURMUR_KEYRING_INVENTORY) {
+            std::lock_guard<std::mutex> guard(mu);
+            args->json = nullptr;
+            std::string json;
+            if (!keyringSealed) {
+                json = "{\"sealed\":false}";
+            } else {
+                json = "{\"sealed\":true,";
+                json += "\"seq\":" + std::to_string(keyring.seq) + ",";
+                json += "\"kdf\":\"";
+                json += (keyring.kdf == SQLITE_MURMUR_KDF_ARGON2ID ? "argon2id" : "direct");
+                json += "\",\"kdf_time\":" + std::to_string(keyring.argon_time);
+                json += ",\"kdf_memory_kib\":" + std::to_string(keyring.argon_memory_kib);
+                json += ",\"kdf_threads\":" + std::to_string(keyring.argon_threads);
+                json += ",\"wrap_id\":\"" + jsonEscape(keyring.wrap_id) + "\"";
+                json += ",\"current\":" + std::to_string(keyring.current) + ",\"keys\":[";
+                for (size_t i = 0; i < keyring.keys.size(); ++i) {
+                    if (i) json += ",";
+                    const auto &entry = keyring.keys[i];
+                    json += "{\"id\":" + std::to_string(entry.id);
+                    json += ",\"created_nanos\":" + std::to_string(entry.created_nanos);
+                    json += ",\"active\":";
+                    json += (entry.active ? "true" : "false");
+                    json += "}";
+                }
+                json += "]}";
+            }
+            args->json = static_cast<char *>(sqlite3_malloc64(json.size() + 1));
+            if (!args->json) return SQLITE_NOMEM;
+            std::memcpy(args->json, json.data(), json.size() + 1);
+            return SQLITE_OK;
+        }
+        // WP-D slice D2b: online rotation. Same lock discipline as seal
+        // (mutationMu -> flushMu held throughout; mu for the install):
+        // writers/flush excluded so the next id is computed + installed
+        // atomically (no concurrent-rotate id reuse), lock-free readers
+        // heal via the generation bump. New id returns in args->value.
+        // Argon2-sealed stores fail closed: re-sealing needs the
+        // passphrase, which the Store never holds (F2 register API).
+        if (args->op == SQLITE_MURMUR_KEYRING_ROTATE) {
+            if (readOnly) return SQLITE_READONLY;
+            std::lock_guard<std::mutex> mutation(mutationMu);
+            std::lock_guard<std::mutex> serial(flushMu);
+            std::array<unsigned char, 32> master{};
+            std::array<unsigned char, 16> storeId{};
+            sqlite_murmur_keyring staged;
+            bool sync = true;
+            {
+                std::lock_guard<std::mutex> guard(mu);
+                if (!keyringSealed) return SQLITE_ERROR;
+                if (keyring.kdf != SQLITE_MURMUR_KDF_DIRECT_HKDF)
+                    return SQLITE_ERROR;
+                master = settings.key;
+                storeId = keyringStoreId;
+                staged = keyring;
+                sync = settings.rocksdbSync;
+            }
+            std::string envelope;
+            std::uint32_t newId = 0;
+            const int rotRc = sqlite_murmur_keyring_rotate(
+                staged, storeId.data(), master.data(), nullptr, envelope, newId);
+            sqlite_murmur_keyring_destroy(staged);
+            if (rotRc != SQLITE_OK) {
+                OPENSSL_cleanse(master.data(), master.size());
+                return rotRc;
+            }
+            rocksdb::WriteOptions envelopeOpts;
+            envelopeOpts.sync = sync;
+            if (!db->Put(envelopeOpts, kMetaKeyring, envelope).ok()) {
+                OPENSSL_cleanse(master.data(), master.size());
+                return SQLITE_IOERR_WRITE;
+            }
+            {
+                std::lock_guard<std::mutex> guard(mu);
+                sqlite_murmur_keyring ring;
+                const int openRc = sqlite_murmur_keyring_open(
+                    reinterpret_cast<const unsigned char *>(envelope.data()), envelope.size(),
+                    master.data(), nullptr, keyringStoreId.data(), keyringStoreId.data(), ring);
+                OPENSSL_cleanse(master.data(), master.size());
+                if (openRc != SQLITE_OK) {
+                    sqlite_murmur_keyring_destroy(ring);
+                    return SQLITE_CORRUPT;
+                }
+                std::uint32_t activeId = 0;
+                const unsigned char *active = sqlite_murmur_keyring_current(ring, activeId);
+                if (!active || activeId != newId) {
+                    sqlite_murmur_keyring_destroy(ring);
+                    return SQLITE_CORRUPT;
+                }
+                std::array<unsigned char, 32> fresh{};
+                std::memcpy(fresh.data(), active, fresh.size());
+                keyring = ring;
+                sqlite_murmur_keyring_destroy(ring);
+                activeKey = fresh;
+                OPENSSL_cleanse(fresh.data(), fresh.size());
+                ++generation;
+            }
+            args->value = newId;
+            args->json = nullptr;
+            return SQLITE_OK;
+        }
+        // WP-D slice D2b: conservative prune (ruling R). Under the rotate
+        // locks (quiescent key set): scan the page key-space; EXP3/EXP4
+        // ids pin keys exactly; ANY unkeyed EXP1/EXP2 record blocks all
+        // pruning (it could use any key); undecodable records are
+        // skipped and reported (they fail decrypt identically with or
+        // without the prune, so skipping cannot strand a readable page).
+        // Checkpoints need no pinning: each carries its own envelope
+        // copy (ruling S). No-op prunes write nothing and skip the bump.
+        if (args->op == SQLITE_MURMUR_KEYRING_PRUNE) {
+            if (readOnly) return SQLITE_READONLY;
+            std::lock_guard<std::mutex> mutation(mutationMu);
+            std::lock_guard<std::mutex> serial(flushMu);
+            {
+                std::lock_guard<std::mutex> guard(mu);
+                if (!keyringSealed) {
+                    const std::string empty =
+                        "{\"pruned\":[],\"blocked_by_unkeyed\":0,\"retained\":[],\"unreadable\":0}";
+                    args->json = static_cast<char *>(sqlite3_malloc64(empty.size() + 1));
+                    if (!args->json) return SQLITE_NOMEM;
+                    std::memcpy(args->json, empty.data(), empty.size() + 1);
+                    return SQLITE_OK;
+                }
+            }
+            std::unordered_set<std::uint32_t> referenced;
+            std::uint64_t unkeyed = 0, unreadable = 0;
+            {
+                std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(rocksdb::ReadOptions()));
+                for (it->Seek(pageKey(0)); it->Valid(); it->Next()) {
+                    const rocksdb::Slice k = it->key();
+                    if (k.size() != 9 || k[0] != 'p') break;
+                    const rocksdb::Slice v = it->value();
+                    const std::string record(v.data(), v.size());
+                    std::uint32_t id = 0;
+                    if (recordKeyId(record, id)) {
+                        if (id != 0) referenced.insert(id);
+                        else ++unreadable;
+                    } else if (isLegacyRecord(record)) {
+                        ++unkeyed;
+                    } else {
+                        ++unreadable;
+                    }
+                }
+                if (!it->status().ok()) return SQLITE_IOERR_READ;
+            }
+            std::vector<std::uint32_t> drop, retained;
+            {
+                std::lock_guard<std::mutex> guard(mu);
+                for (const auto &entry : keyring.keys) {
+                    if (entry.active || entry.id == keyring.current) {
+                        retained.push_back(entry.id);
+                        continue;
+                    }
+                    if (unkeyed == 0 &&
+                        referenced.find(entry.id) == referenced.end())
+                        drop.push_back(entry.id);
+                    else
+                        retained.push_back(entry.id);
+                }
+            }
+            if (!drop.empty()) {
+                std::array<unsigned char, 32> master{};
+                std::array<unsigned char, 16> storeId{};
+                sqlite_murmur_keyring staged;
+                bool sync = true;
+                {
+                    std::lock_guard<std::mutex> guard(mu);
+                    if (keyring.kdf != SQLITE_MURMUR_KDF_DIRECT_HKDF)
+                        return SQLITE_ERROR; // F2: no passphrase in Store
+                    master = settings.key;
+                    storeId = keyringStoreId;
+                    staged = keyring;
+                    sync = settings.rocksdbSync;
+                }
+                std::string envelope;
+                const int dropRc = sqlite_murmur_keyring_drop_keys(
+                    staged, drop.data(), drop.size(), storeId.data(),
+                    master.data(), nullptr, envelope);
+                sqlite_murmur_keyring_destroy(staged);
+                OPENSSL_cleanse(master.data(), master.size());
+                if (dropRc != SQLITE_OK) return dropRc;
+                rocksdb::WriteOptions envelopeOpts;
+                envelopeOpts.sync = sync;
+                if (!db->Put(envelopeOpts, kMetaKeyring, envelope).ok())
+                    return SQLITE_IOERR_WRITE;
+                {
+                    std::lock_guard<std::mutex> guard(mu);
+                    sqlite_murmur_keyring ring;
+                    const int openRc = sqlite_murmur_keyring_open(
+                        reinterpret_cast<const unsigned char *>(envelope.data()), envelope.size(),
+                        settings.key.data(), nullptr, keyringStoreId.data(),
+                        keyringStoreId.data(), ring);
+                    if (openRc != SQLITE_OK) {
+                        sqlite_murmur_keyring_destroy(ring);
+                        return SQLITE_CORRUPT;
+                    }
+                    keyring = ring;
+                    sqlite_murmur_keyring_destroy(ring);
+                    ++generation;
+                }
+            }
+            std::string json = "{\"pruned\":[";
+            for (size_t i = 0; i < drop.size(); ++i)
+                json += (i ? "," : "") + std::to_string(drop[i]);
+            json += "],\"blocked_by_unkeyed\":" + std::to_string(unkeyed);
+            json += ",\"retained\":[";
+            for (size_t i = 0; i < retained.size(); ++i)
+                json += (i ? "," : "") + std::to_string(retained[i]);
+            json += "],\"unreadable\":" + std::to_string(unreadable) + "}";
+            args->json = static_cast<char *>(sqlite3_malloc64(json.size() + 1));
+            if (!args->json) return SQLITE_NOMEM;
+            std::memcpy(args->json, json.data(), json.size() + 1);
+            return SQLITE_OK;
+        }
+        if (args->op != SQLITE_MURMUR_KEYRING_SET) return SQLITE_MISUSE;
+        if (readOnly) return SQLITE_READONLY;
+        // Range gate (mirrors config.rs validate; keep the two in sync).
+        bool rangeOk = false;
+        switch (args->param) {
+            case SQLITE_MURMUR_KEYRING_PARAM_KDF: rangeOk = args->value <= 1; break;
+            case SQLITE_MURMUR_KEYRING_PARAM_TIME:
+                rangeOk = args->value >= 1 && args->value <= 32;
+                break;
+            case SQLITE_MURMUR_KEYRING_PARAM_MEMORY:
+                rangeOk = args->value >= 1024 && args->value <= 16777216;
+                break;
+            case SQLITE_MURMUR_KEYRING_PARAM_THREADS:
+                rangeOk = args->value >= 1 && args->value <= 32;
+                break;
+            default: return SQLITE_MISUSE;
+        }
+        if (!rangeOk) return SQLITE_ERROR;
+        std::lock_guard<std::mutex> mutation(mutationMu);
+        std::lock_guard<std::mutex> serial(flushMu);
+        std::array<unsigned char, 32> master{};
+        bool doSeal = false;
+        std::uint8_t sealKdf = 0;
+        bool sync = true;
+        {
+            std::lock_guard<std::mutex> guard(mu);
+            if (keyringSealed) return SQLITE_BUSY;
+            // No empty-store guard (unlike setCipher): a seal is safe on a
+            // live store — writers/flush are excluded by the held mutexes,
+            // lock-free readers retry on the generation bump below, and
+            // pre-seal pages stay readable via the master fallback until a
+            // flush lazily re-encrypts them with the active key.
+            switch (args->param) {
+                case SQLITE_MURMUR_KEYRING_PARAM_KDF:
+                    // Not staged: a failed seal leaves zero trace, and a
+                    // successful one reports the header, not the staging.
+                    sealKdf = static_cast<std::uint8_t>(args->value);
+                    doSeal = true;
+                    break;
+                case SQLITE_MURMUR_KEYRING_PARAM_TIME:
+                    stagedTime = static_cast<std::uint32_t>(args->value);
+                    break;
+                case SQLITE_MURMUR_KEYRING_PARAM_MEMORY:
+                    stagedMemoryKib = static_cast<std::uint32_t>(args->value);
+                    break;
+                default:
+                    stagedThreads = static_cast<std::uint8_t>(args->value);
+                    break;
+            }
+            if (!doSeal) return SQLITE_OK;
+            master = settings.key;
+            sync = settings.rocksdbSync;
+        }
+        // Seal: selecting the KDF materializes the envelope immediately.
+        // Persist-then-install (rotate_persisted spirit): a crash between
+        // the store-id write and the envelope write is harmless (the next
+        // seal reuses the id), and the in-memory install only happens after
+        // both meta keys are durable.
+        std::array<unsigned char, 16> storeId{};
+        {
+            std::string idBytes;
+            const auto idStatus = db->Get(rocksdb::ReadOptions(), kMetaStoreId, &idBytes);
+            if (idStatus.ok()) {
+                if (idBytes.size() != storeId.size()) {
+                    OPENSSL_cleanse(master.data(), master.size());
+                    return SQLITE_CORRUPT;
+                }
+                std::memcpy(storeId.data(), idBytes.data(), storeId.size());
+            } else if (idStatus.IsNotFound()) {
+                if (RAND_bytes(storeId.data(), storeId.size()) != 1) {
+                    OPENSSL_cleanse(master.data(), master.size());
+                    return SQLITE_ERROR;
+                }
+                rocksdb::WriteOptions idOpts;
+                idOpts.sync = sync;
+                if (!db->Put(idOpts, kMetaStoreId,
+                             rocksdb::Slice(reinterpret_cast<const char *>(storeId.data()),
+                                            storeId.size())).ok()) {
+                    OPENSSL_cleanse(master.data(), master.size());
+                    return SQLITE_IOERR_WRITE;
+                }
+            } else {
+                OPENSSL_cleanse(master.data(), master.size());
+                return SQLITE_IOERR_READ;
+            }
+        }
+        std::uint8_t kdf = 0;
+        std::uint32_t time = 0, memoryKib = 0;
+        std::uint8_t threads = 0;
+        {
+            std::lock_guard<std::mutex> guard(mu);
+            kdf = sealKdf;
+            time = stagedTime;
+            memoryKib = stagedMemoryKib;
+            threads = stagedThreads;
+        }
+        if (kdf == SQLITE_MURMUR_KDF_DIRECT_HKDF) {
+            // Direct-HKDF has no cost params: the v3 header records zeros
+            // (archive format; create() enforces it). Staged argon costs
+            // only survive an argon2id seal.
+            time = 0;
+            memoryKib = 0;
+            threads = 0;
+        }
+        std::string envelope;
+        const int createRc = sqlite_murmur_keyring_create(
+            kdf, time, memoryKib, threads, "", storeId.data(), storeId.data(),
+            master.data(), nullptr, envelope);
+        if (createRc != SQLITE_OK) {
+            OPENSSL_cleanse(master.data(), master.size());
+            return createRc;
+        }
+        rocksdb::WriteOptions envelopeOpts;
+        envelopeOpts.sync = sync;
+        if (!db->Put(envelopeOpts, kMetaKeyring, envelope).ok()) {
+            OPENSSL_cleanse(master.data(), master.size());
+            return SQLITE_IOERR_WRITE;
+        }
+        {
+            std::lock_guard<std::mutex> guard(mu);
+            if (keyringSealed) { // Serialized by mutationMu; never taken.
+                OPENSSL_cleanse(master.data(), master.size());
+                return SQLITE_BUSY;
+            }
+            sqlite_murmur_keyring ring;
+            const int openRc = sqlite_murmur_keyring_open(
+                reinterpret_cast<const unsigned char *>(envelope.data()), envelope.size(),
+                master.data(), nullptr, storeId.data(), storeId.data(), ring);
+            OPENSSL_cleanse(master.data(), master.size());
+            if (openRc != SQLITE_OK) {
+                sqlite_murmur_keyring_destroy(ring);
+                return SQLITE_CORRUPT;
+            }
+            std::uint32_t activeId = 0;
+            const unsigned char *active = sqlite_murmur_keyring_current(ring, activeId);
+            if (!active) {
+                sqlite_murmur_keyring_destroy(ring);
+                return SQLITE_CORRUPT;
+            }
+            // Snapshot BEFORE destroying the staging ring (see start()).
+            std::array<unsigned char, 32> fresh{};
+            std::memcpy(fresh.data(), active, fresh.size());
+            keyringStoreId = storeId;
+            keyring = ring;
+            sqlite_murmur_keyring_destroy(ring);
+            activeKey = fresh;
+            OPENSSL_cleanse(fresh.data(), fresh.size());
+            keyringSealed = true;
+            // Lock-free readers retry when the generation moves (the read
+            // path re-fetches and re-decrypts, so a raced seal heals).
+            ++generation;
+        }
         return SQLITE_OK;
     }
 
@@ -783,9 +1560,11 @@ struct Store {
     int loadForMutation(uint64_t id, DecodeWorkspace &workspace, Cipher cipher) {
         Record record;
         uint64_t currentSize;
+        PageKeys keys;
         {
             std::lock_guard<std::mutex> guard(mu);
             currentSize = size;
+            keys = snapshotPageKeys();
             auto it = cache.find(id);
             if (it != cache.end()) record = it->second.record;
         }
@@ -802,7 +1581,7 @@ struct Store {
         if (record.plain) {
             workspace.block = record.plain->bytes;
             workspace.blockDirty = true;
-        } else if (!decrypt(cipher, settings.key.data(), id, *record, workspace.block, workspace)) return SQLITE_IOERR_READ;
+        } else if (!decryptPage(cipher, id, *record, workspace.block, workspace, keys)) return SQLITE_IOERR_READ;
         if (currentSize - id * kBlock < kBlock)
             std::memset(workspace.block.data() + currentSize % kBlock, 0, kBlock - currentSize % kBlock);
         return SQLITE_OK;
@@ -822,10 +1601,12 @@ struct Store {
             uint64_t epoch, avail;
             Cipher cipher;
             size_t blocks;
+            PageKeys keys;
             {
                 std::lock_guard<std::mutex> guard(mu);
                 epoch = generation;
                 cipher = settings.cipher;
+                keys = snapshotPageKeys();
                 avail = begin < size ? std::min<uint64_t>(count, size - begin) : 0;
                 blocks = avail ? (begin % kBlock + avail + kBlock - 1) / kBlock : 0;
                 for (size_t i = 0; i < blocks; ++i) {
@@ -859,7 +1640,7 @@ struct Store {
                     testPoint("read_plain_copied");
                 } else if (version.record) {
                     if (!workspace) workspace = workspacePool->acquire();
-                    if (!decrypt(cipher, settings.key.data(), version.id, *version.record, workspace->block, *workspace)) {
+                    if (!decryptPage(cipher, version.id, *version.record, workspace->block, *workspace, keys)) {
                         rc = SQLITE_IOERR_READ;
                         break;
                     }
@@ -1094,6 +1875,14 @@ struct Store {
                 for (const auto &entry : work->pages) prepared.push_back({entry.first, entry.second, {}, 0});
                 const Cipher cipher = settings.cipher;
                 const int level = settings.compressionLevel;
+                // D2b: sealed stores encode EXP3/EXP4 with the current id
+                // (lazy migration: rewritten pages pick up key ids while
+                // pre-seal pages keep working via the trial chain). flushMu
+                // excludes seal/rotate, so this snapshot is stable for the
+                // whole persist and safe to share read-only across encoders.
+                const PageKeys persistKeys = snapshotPageKeys();
+                const uint32_t encodeKeyId =
+                    persistKeys.sealed ? persistKeys.current : 0;
                 std::atomic<bool> failed{false};
                 encoders->run(prepared.size(), [&](size_t index, EncoderWorkspace &workspace) {
                     auto &entry = prepared[index];
@@ -1101,7 +1890,7 @@ struct Store {
                     const Block *block;
                     if (entry.original.plain) block = &entry.original.plain->bytes;
                     else {
-                        if (!decrypt(cipher, settings.key.data(), entry.id, *entry.original, workspace.decode.block, workspace.decode)) {
+                        if (!decryptPage(cipher, entry.id, *entry.original, workspace.decode.block, workspace.decode, persistKeys)) {
                             failed = true; return;
                         }
                         block = &workspace.decode.block;
@@ -1119,7 +1908,7 @@ struct Store {
                     const auto *payload = compressed ? workspace.scratch.data() : block->data();
                     const size_t length = compressed ? n : block->size();
                     auto encoded = newRecord();
-                    if (!encrypt(cipher, settings.key.data(), entry.id, payload, length, compressed, *encoded)) {
+                    if (!encrypt(cipher, persistKeys.page, entry.id, payload, length, compressed, *encoded, encodeKeyId)) {
                         failed = true; return;
                     }
                     entry.payloadBytes = length;
@@ -1228,6 +2017,12 @@ std::unordered_map<std::string, std::weak_ptr<Store>> gStores;
 std::unordered_map<std::string, std::shared_ptr<MemFile>> gMemFiles;
 std::atomic<unsigned long long> gTempId{0};
 bool gRegistered = false;
+// WP-C §7a group file key (+ rotation previous). Guarded by gMu, wiped at
+// unregister. Read once by the replication layer at Hosts configure time.
+std::array<unsigned char, 32> gFileKey{};
+std::array<unsigned char, 32> gFileKeyPrevious{};
+bool gFileKeySet = false;
+bool gFileKeyPreviousSet = false;
 
 bool isJournal(const std::string &name) {
     return name.size() >= 8 && name.compare(name.size() - 8, 8, "-journal") == 0;
@@ -1380,6 +2175,28 @@ int ioFileControl(sqlite3_file *p, int op, void *arg) {
     }
     if (file->mainDb && op == SQLITE_MURMUR_FCNTL_FLUSH)
         return file->store->flush();
+    if (file->mainDb && op == SQLITE_MURMUR_FCNTL_BACKUP && arg) {
+        const int fr = file->store->flush();
+        if (fr != SQLITE_OK) return fr;
+        const char *cipher;
+        {
+            std::lock_guard<std::mutex> serial(file->store->flushMu);
+            std::lock_guard<std::mutex> guard(file->store->mu);
+            cipher = cipherName(file->store->settings.cipher);
+        }
+        std::lock_guard<std::mutex> backup(file->store->backupMu);
+        return sqlite_murmur_backup_run(file->store->db.get(), cipher,
+                                        static_cast<const sqlite_murmur_backup_args *>(arg), nullptr);
+    }
+    if (file->mainDb && op == SQLITE_MURMUR_FCNTL_COMPACT) {
+        const int fr = file->store->flush();
+        if (fr != SQLITE_OK) return fr;
+        return sqlite_murmur_compact_run(file->store->db.get());
+    }
+    if (file->mainDb && op == SQLITE_MURMUR_FCNTL_KEYRING && arg) {
+        return file->store->keyringControl(
+            static_cast<sqlite_murmur_keyring_args *>(arg), file->readOnly);
+    }
     if (file->mainDb && op == SQLITE_FCNTL_PRAGMA && arg) {
         auto **arguments = static_cast<char **>(arg);
         if (arguments[1] && sqlite3_strnicmp(arguments[1], "murmur_", 7) == 0) {
@@ -1686,6 +2503,323 @@ extern "C" int sqlite_murmur_checkpoint(const char *path) {
     return rc == SQLITE_OK ? store->checkpoint() : rc;
 }
 
+extern "C" int sqlite_murmur_repair(const char *path) {
+    if (!path || !*path) return SQLITE_MISUSE;
+    // RepairDB would happily initialize a missing directory; a typo must
+    // fail, not mkdir junk.
+    std::error_code ec;
+    if (!std::filesystem::is_directory(path, ec) || ec) return SQLITE_CANTOPEN;
+    // Same-process live handles merge fcntl locks, so RepairDB alone would
+    // not catch them: refuse here. Cross-process LOCKs fail inside RepairDB.
+    std::shared_ptr<Store> store;
+    if (lookupStore(path, store) == SQLITE_OK) return SQLITE_BUSY;
+    // Same Options recipe as Store::start, minus create_if_missing: repair
+    // never initializes a missing store.
+    rocksdb::Options options;
+    options.create_if_missing = false;
+    options.compression = rocksdb::kNoCompression;
+    auto blockCache = rocksdb::NewLRUCache(kRocksBlockCacheBytes);
+    rocksdb::BlockBasedTableOptions tableOptions;
+    tableOptions.block_cache = blockCache;
+    options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(tableOptions));
+    return rocksdb::RepairDB(path, options).ok() ? SQLITE_OK : SQLITE_IOERR;
+}
+
+// WP-D F3: offline key inventory. Mirrors repair's guards (missing ->
+// CANTOPEN without initializing; same-process live -> BUSY), then
+// temp-opens STORAGE_ONLY read-only and reuses the INVENTORY op, so the
+// JSON shape stays single-sourced with murmur_key_inventory().
+extern "C" int sqlite_murmur_key_inventory(const char *path, char **json_out) {
+    if (!path || !*path || !json_out) return SQLITE_MISUSE;
+    *json_out = nullptr;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(path, ec) || ec) return SQLITE_CANTOPEN;
+    std::shared_ptr<Store> store;
+    if (lookupStore(path, store) == SQLITE_OK) return SQLITE_BUSY;
+    sqlite3 *db = nullptr;
+    sqlite_murmur_open_options opts{};
+    opts.flags = SQLITE_MURMUR_OPEN_STORAGE_ONLY;
+    const int rc = sqlite_murmur_open_v2(
+        path, &db, SQLITE_OPEN_READONLY | SQLITE_OPEN_FULLMUTEX, &opts);
+    if (rc != SQLITE_OK || !db) {
+        if (db) sqlite3_close(db);
+        return SQLITE_CANTOPEN;
+    }
+    sqlite_murmur_keyring_args args{};
+    args.op = SQLITE_MURMUR_KEYRING_INVENTORY;
+    const int frc = sqlite3_file_control(
+        db, "main", SQLITE_MURMUR_FCNTL_KEYRING, &args);
+    sqlite_murmur_close(db);
+    if (frc != SQLITE_OK) {
+        if (args.json) sqlite3_free(args.json);
+        return frc;
+    }
+    if (!args.json) return SQLITE_CORRUPT;
+    *json_out = args.json;
+    return SQLITE_OK;
+}
+
+// WP-D G2: offline full store rekey.
+extern "C" int sqlite_murmur_rekey(const char *path,
+                                    const unsigned char old_master[32],
+                                    const unsigned char new_master[32],
+                                    const sqlite_murmur_rekey_options *opts) {
+    if (!path || !*path || !old_master || !new_master) return SQLITE_MISUSE;
+    std::error_code ec;
+    if (!std::filesystem::is_directory(path, ec) || ec) return SQLITE_CANTOPEN;
+    std::shared_ptr<Store> existingStore;
+    if (lookupStore(path, existingStore) == SQLITE_OK) return SQLITE_BUSY;
+
+    rocksdb::Options options;
+    options.create_if_missing = false;
+    options.compression = rocksdb::kNoCompression;
+    auto blockCache = rocksdb::NewLRUCache(kRocksBlockCacheBytes);
+    rocksdb::BlockBasedTableOptions tableOptions;
+    tableOptions.block_cache = blockCache;
+    options.table_factory.reset(rocksdb::NewBlockBasedTableFactory(tableOptions));
+
+    rocksdb::DB *rawDb = nullptr;
+    const auto dbStatus = rocksdb::DB::Open(options, path, &rawDb);
+    if (!dbStatus.ok()) {
+        if (dbStatus.IsBusy() || dbStatus.IsTryAgain()) return SQLITE_BUSY;
+        return SQLITE_CANTOPEN;
+    }
+    std::unique_ptr<rocksdb::DB> db(rawDb);
+
+    Cipher cipher = Cipher::AES256GCM;
+    std::string cipherStr;
+    if (db->Get(rocksdb::ReadOptions(), kMetaCipher, &cipherStr).ok()) {
+        if (cipherStr == "aegis256") {
+#ifdef SQLITE_MURMUR_HAS_AEGIS256
+            cipher = Cipher::AEGIS256;
+#else
+            return SQLITE_ERROR;
+#endif
+        } else if (cipherStr != "aes256gcm") {
+            return SQLITE_CORRUPT;
+        }
+    }
+
+    std::string currentEnv;
+    const auto envStatus = db->Get(rocksdb::ReadOptions(), kMetaKeyring, &currentEnv);
+    if (!envStatus.ok()) {
+        return SQLITE_ERROR; // R2: clean refusal for unsealed store
+    }
+
+    std::string storeId;
+    if (!db->Get(rocksdb::ReadOptions(), kMetaStoreId, &storeId).ok() || storeId.size() != 16) {
+        return SQLITE_CORRUPT;
+    }
+    const auto *binding = reinterpret_cast<const unsigned char *>(storeId.data());
+
+    sqlite_murmur_keyring oldRing{};
+    int keyringRc = sqlite_murmur_keyring_open(
+        reinterpret_cast<const unsigned char *>(currentEnv.data()), currentEnv.size(),
+        old_master, nullptr, binding, binding, oldRing);
+    if (keyringRc != SQLITE_OK) {
+        sqlite_murmur_keyring_destroy(oldRing);
+        return keyringRc;
+    }
+    if (oldRing.kdf != SQLITE_MURMUR_KDF_DIRECT_HKDF) {
+        sqlite_murmur_keyring_destroy(oldRing);
+        return SQLITE_ERROR;
+    }
+
+    uint32_t oldCurrentId = 0;
+    const unsigned char *oldCurrentRaw = sqlite_murmur_keyring_current(oldRing, oldCurrentId);
+    if (!oldCurrentRaw || oldCurrentId == 0) {
+        sqlite_murmur_keyring_destroy(oldRing);
+        return SQLITE_CORRUPT;
+    }
+    Store::PageKeys oldKeys{};
+    oldKeys.sealed = true;
+    oldKeys.current = oldCurrentId;
+    std::memcpy(oldKeys.page, oldCurrentRaw, 32);
+    std::memcpy(oldKeys.active, oldCurrentRaw, 32);
+    std::memcpy(oldKeys.master, old_master, 32);
+    for (const auto &entry : oldRing.keys) {
+        if (entry.active) continue;
+        std::array<unsigned char, 32> mat{};
+        std::memcpy(mat.data(), entry.key, 32);
+        oldKeys.retired.emplace_back(entry.id, mat);
+        OPENSSL_cleanse(mat.data(), 32);
+    }
+
+    std::string stagedEnv;
+    rocksdb::WriteOptions writeOpts;
+    writeOpts.sync = true;
+    bool stagedExists = db->Get(rocksdb::ReadOptions(), kMetaKeyringRekey, &stagedEnv).ok() && !stagedEnv.empty();
+    if (!stagedExists) {
+        int createRc = sqlite_murmur_keyring_create(
+            oldRing.kdf, oldRing.argon_time, oldRing.argon_memory_kib,
+            oldRing.argon_threads, oldRing.wrap_id.c_str(),
+            binding, binding, new_master, nullptr, stagedEnv);
+        if (createRc != SQLITE_OK) {
+            sqlite_murmur_keyring_destroy(oldRing);
+            return createRc;
+        }
+        if (!db->Put(writeOpts, kMetaKeyringRekey, stagedEnv).ok()) {
+            sqlite_murmur_keyring_destroy(oldRing);
+            return SQLITE_IOERR_WRITE;
+        }
+    }
+
+    sqlite_murmur_keyring newRing{};
+    int newOpenRc = sqlite_murmur_keyring_open(
+        reinterpret_cast<const unsigned char *>(stagedEnv.data()), stagedEnv.size(),
+        new_master, nullptr, binding, binding, newRing);
+    if (newOpenRc != SQLITE_OK) {
+        sqlite_murmur_keyring_destroy(oldRing);
+        sqlite_murmur_keyring_destroy(newRing);
+        return SQLITE_CORRUPT;
+    }
+    uint32_t newActiveId = 0;
+    const unsigned char *newActiveRaw = sqlite_murmur_keyring_current(newRing, newActiveId);
+    if (!newActiveRaw || newActiveId == 0) {
+        sqlite_murmur_keyring_destroy(oldRing);
+        sqlite_murmur_keyring_destroy(newRing);
+        return SQLITE_CORRUPT;
+    }
+    std::array<unsigned char, 32> newActiveKey{};
+    std::memcpy(newActiveKey.data(), newActiveRaw, 32);
+
+    DecodeWorkspace workspace;
+    rocksdb::WriteBatch batch;
+    int chunkCount = 0;
+    int totalWritten = 0;
+
+    std::unique_ptr<ZSTD_CCtx, decltype(&ZSTD_freeCCtx)> cctx{ZSTD_createCCtx(), ZSTD_freeCCtx};
+    std::array<unsigned char, kScratchSize> scratch{};
+
+    std::unique_ptr<rocksdb::Iterator> it(db->NewIterator(rocksdb::ReadOptions()));
+    for (it->Seek(pageKey(0)); it->Valid(); it->Next()) {
+        const rocksdb::Slice k = it->key();
+        if (k.size() != 9 || k[0] != 'p') break;
+        uint64_t page = 0;
+        for (int i = 1; i <= 8; ++i) {
+            page = (page << 8) | static_cast<unsigned char>(k[i]);
+        }
+        const rocksdb::Slice v = it->value();
+        const std::string record(v.data(), v.size());
+
+        Block block{};
+        bool decrypted = Store::decryptPage(cipher, page, record, block, workspace, oldKeys);
+        if (!decrypted) {
+            decrypted = decrypt(cipher, newActiveKey.data(), page, record, block, workspace);
+        }
+        if (!decrypted) {
+            sqlite_murmur_keyring_destroy(oldRing);
+            sqlite_murmur_keyring_destroy(newRing);
+            OPENSSL_cleanse(newActiveKey.data(), 32);
+            return SQLITE_CORRUPT;
+        }
+
+        uint32_t origKeyId = 0;
+        bool wasKeyed = recordKeyId(record, origKeyId);
+
+        size_t n = block.size();
+        if (cctx) {
+            n = ZSTD_compressCCtx(cctx.get(), scratch.data(),
+                                  scratch.size(), block.data(),
+                                  block.size(), 3);
+        }
+        const bool compressed = cctx && !ZSTD_isError(n) && n < kBlock;
+        const auto *payload = compressed ? scratch.data() : block.data();
+        const size_t length = compressed ? n : block.size();
+
+        std::string newRecord;
+        uint32_t targetKeyId = wasKeyed ? newActiveId : 0;
+        if (!encrypt(cipher, newActiveKey.data(), page, payload, length,
+                     compressed, newRecord, targetKeyId)) {
+            sqlite_murmur_keyring_destroy(oldRing);
+            sqlite_murmur_keyring_destroy(newRing);
+            OPENSSL_cleanse(newActiveKey.data(), 32);
+            return SQLITE_IOERR_WRITE;
+        }
+
+        batch.Put(k, newRecord);
+        // Plaintext (possibly compressed) no longer needed: batch holds
+        // only the re-encrypted record. Cleanse before the next page.
+        OPENSSL_cleanse(block.data(), block.size());
+        OPENSSL_cleanse(scratch.data(), scratch.size());
+        ++chunkCount;
+        ++totalWritten;
+
+        if (opts && opts->fault_after_pages > 0 && totalWritten >= opts->fault_after_pages) {
+            db->Write(writeOpts, &batch);
+            sqlite_murmur_keyring_destroy(oldRing);
+            sqlite_murmur_keyring_destroy(newRing);
+            OPENSSL_cleanse(newActiveKey.data(), 32);
+            return SQLITE_IOERR_WRITE;
+        }
+
+        if (chunkCount >= 100) {
+            if (!db->Write(writeOpts, &batch).ok()) {
+                sqlite_murmur_keyring_destroy(oldRing);
+                sqlite_murmur_keyring_destroy(newRing);
+                OPENSSL_cleanse(newActiveKey.data(), 32);
+                return SQLITE_IOERR_WRITE;
+            }
+            batch.Clear();
+            chunkCount = 0;
+        }
+    }
+    if (chunkCount > 0) {
+        if (!db->Write(writeOpts, &batch).ok()) {
+            sqlite_murmur_keyring_destroy(oldRing);
+            sqlite_murmur_keyring_destroy(newRing);
+            OPENSSL_cleanse(newActiveKey.data(), 32);
+            return SQLITE_IOERR_WRITE;
+        }
+        batch.Clear();
+    }
+
+    rocksdb::WriteBatch flipBatch;
+    flipBatch.Put(kMetaKeyring, stagedEnv);
+    flipBatch.Delete(kMetaKeyringRekey);
+    if (!db->Write(writeOpts, &flipBatch).ok()) {
+        sqlite_murmur_keyring_destroy(oldRing);
+        sqlite_murmur_keyring_destroy(newRing);
+        OPENSSL_cleanse(newActiveKey.data(), 32);
+        return SQLITE_IOERR_WRITE;
+    }
+
+    sqlite_murmur_keyring_destroy(oldRing);
+    sqlite_murmur_keyring_destroy(newRing);
+    OPENSSL_cleanse(newActiveKey.data(), 32);
+    return SQLITE_OK;
+}
+
+extern "C" int sqlite_murmur_register_file_key(const unsigned char current[32],
+                                                const unsigned char previous[32]) {
+    if (!current) return SQLITE_MISUSE;
+    std::lock_guard<std::mutex> guard(gMu);
+    if (gFileKeySet) return SQLITE_MISUSE;
+    std::copy_n(current, 32, gFileKey.begin());
+    if (previous) {
+        std::copy_n(previous, 32, gFileKeyPrevious.begin());
+        gFileKeyPreviousSet = true;
+    }
+    gFileKeySet = true;
+    return SQLITE_OK;
+}
+
+extern "C" int sqlite_murmur_file_key_current(unsigned char out[32]) {
+    if (!out) return SQLITE_MISUSE;
+    std::lock_guard<std::mutex> guard(gMu);
+    if (!gFileKeySet) return SQLITE_NOTFOUND;
+    std::copy_n(gFileKey.begin(), 32, out);
+    return SQLITE_OK;
+}
+
+extern "C" int sqlite_murmur_file_key_previous(unsigned char out[32]) {
+    if (!out) return SQLITE_MISUSE;
+    std::lock_guard<std::mutex> guard(gMu);
+    if (!gFileKeyPreviousSet) return SQLITE_NOTFOUND;
+    std::copy_n(gFileKeyPrevious.begin(), 32, out);
+    return SQLITE_OK;
+}
+
 extern "C" int sqlite_murmur_unregister(void) {
     std::lock_guard<std::mutex> guard(gMu);
     for (const auto &it : gStores) if (!it.second.expired()) return SQLITE_BUSY;
@@ -1693,6 +2827,10 @@ extern "C" int sqlite_murmur_unregister(void) {
     const int rc = sqlite3_vfs_unregister(&gVfs);
     if (rc == SQLITE_OK) {
         OPENSSL_cleanse(gSettings.key.data(), gSettings.key.size());
+        OPENSSL_cleanse(gFileKey.data(), gFileKey.size());
+        OPENSSL_cleanse(gFileKeyPrevious.data(), gFileKeyPrevious.size());
+        gFileKeySet = false;
+        gFileKeyPreviousSet = false;
         gMemFiles.clear();
         gStores.clear();
         gRegistered = false;

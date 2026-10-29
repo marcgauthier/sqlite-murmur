@@ -225,7 +225,7 @@ instructions are recorded in `third-party/`. Generated files stay under `build/`
 
 The default build includes `SQLITE_MURMUR_ENABLE_MURMUR=ON` and
 `SQLITE_MURMUR_ENABLE_CRSQLITE=ON`, integrating the Rust replication code in
-[`third-party/murmur-replication`](third-party/murmur-replication/README.md).
+[`crates/murmur-replication`](crates/murmur-replication/README.md).
 It discovers peers using bootstrap addresses and SWIM/gossip, authenticates them
 with mutual TLS, and automatically exchanges cr-sqlite changes over QUIC with
 persistent progress, retries and acknowledgements after VFS persistence.
@@ -233,7 +233,7 @@ persistent progress, retries and acknowledgements after VFS persistence.
 Clients supply all settings through `PRAGMA murmur_*` and use SQLite SQL for
 start/stop, synchronization and peer administration. There is no PostgreSQL wire
 protocol or separate database server. Static integration is the default;
-loadable builds are an explicit optional artifact. See the complete [SQL usage guide](third-party/murmur-replication/USAGE.md)
+loadable builds are an explicit optional artifact. See the complete [SQL usage guide](crates/murmur-replication/USAGE.md)
 for certificates, PRAGMAs, durability and lifecycle requirements.
 
 ## cr-sqlite tracking and ingestion benchmarks
@@ -399,6 +399,82 @@ sharing the Store. Existing raw and compressed records remain readable; changing
 this setting does not rewrite them. It is not persisted and resets to `zstd3`
 when the Store reopens. Read-only connections can query but cannot assign it.
 Compression runs **before encryption**; RocksDB compression remains disabled.
+
+### Key envelope (`murmur_kdf*`)
+
+Databases without an envelope encrypt pages directly with the registered
+32-byte key (legacy path, unchanged). Sealing a keys.enc v3 envelope moves
+page crypto to a dedicated data key while the registered key becomes the
+KDF master:
+
+```sql
+PRAGMA murmur_kdf;                -- 'direct' until sealed
+PRAGMA murmur_kdf_time = 5;       -- stage before sealing (optional)
+PRAGMA murmur_kdf = 'direct';     -- seal the envelope now (write-once)
+PRAGMA murmur_kdf_time;           -- read back from the sealed header
+SELECT murmur_key_inventory();    -- non-secret JSON: seq, kdf, keys[]
+```
+
+| PRAGMA | Accepted values | Default |
+| --- | --- | --- |
+| `murmur_kdf` | `direct` or `argon2id` | `direct` |
+| `murmur_kdf_time` | Integer 1 through 32 | `3` |
+| `murmur_kdf_memory_kib` | Integer 1024 through 16777216 | `65536` |
+| `murmur_kdf_threads` | Integer 1 through 32 | `4` |
+
+Setting `murmur_kdf` seals immediately with the staged (or default) time /
+memory / threads, so set those first when the defaults do not suit — but
+note the cost params only survive an `argon2id` seal: `direct` envelopes
+record zeros (Direct-HKDF has no cost params; this matches the archived
+v3 format). All four are write-once after the seal, require autocommit, a
+read-write connection, and stopped replication — and unlike `cipher`,
+sealing is allowed on a live store: pages written before the seal stay
+readable via the master fallback until a flush lazily re-encrypts them
+with the data key. The envelope bytes live in RocksDB metadata beside the
+cipher name
+(readable pre-key; the envelope authenticates itself), never in
+`murmur_config`. A wrong registered key fails the open; `argon2id` without
+a vendored Argon2 unit fails closed with an explanatory error. Key
+rotation and full-store rekey arrive with the offline `rekey` command.
+
+### Files and bridges (`murmur_file_*`, `murmur_bridge_*`)
+
+Large objects replicate as content-chunked rows plus `murmur_kv` metadata
+— never the filesystem, except the operator-chosen air-gap bridge
+directory. File payload crypto (SPFO) needs a provisioned group file key:
+
+```c
+sqlite_murmur_register_file_key(current32, previous_or_NULL32);
+```
+
+Without provisioning, every file action fails closed. The twelve knobs
+are restart-applied PRAGMAs (persisted, read back, applied at next open):
+
+| PRAGMA | Default | Meaning |
+| --- | --- | --- |
+| `murmur_bridge_dir` | `""` | Bridge bundle dir, relative to the DB parent (air-gap exception) |
+| `murmur_files_generation` | `0` | Active file-key generation (rotation: previous required, one step) |
+| `murmur_max_file_bytes` | `4294967296` | Largest single file (1 MiB–32 GiB) |
+| `murmur_max_staging_bytes` | `4294967296` | Staging ceiling (1 MiB–64 GiB) |
+| `murmur_fetch_concurrency` | `8` | Fetch fan-out (1–64) |
+| `murmur_fetch_interval_ms` | `5000` | Fetch tick throttle (≥1000 ms) |
+| `murmur_fetch_bind` | `""` | Fetch endpoint bind; empty = disabled (embedded opt-in) |
+| `murmur_bridge_role` | `""` | Bridge role (`low` or `high` when bridging) |
+| `murmur_bridge_stream` | `""` | Bridge stream name (`[A-Za-z0-9_-]{1,64}`) |
+| `murmur_bridge_max_bundle_bytes` | `67108864` | Bundle ceiling (≥4 KiB) |
+| `murmur_bridge_max_payload_bytes` | `67108864` | Payload ceiling (≥4 KiB) |
+| `murmur_bridge_staging_bytes` | `134217728` | Bundle staging (≥4 KiB; must cover one bundle) |
+
+`murmur_files_dir` is accepted and persisted but inert (deprecated: chunk
+rows replaced the payload directory). Twelve `murmur_file_*` actions
+(upload, download, read ≤1 MiB, delete, list, metadata, availability,
+fetch, last_error, collect, rotate, rotation_status) and ten
+`murmur_bridge_*` actions (export, process, capture, stage, export_file,
+export_snapshot, release, configure, publish_ftp, publish_http) drive the
+surface; side-effecting actions require autocommit. `murmur_file_fetch()`
+reports 0 until the fetch split lands; bridge file export fails closed
+until then. Full action reference:
+[USAGE](crates/murmur-files/USAGE.md).
 
 ### RocksDB tuning
 

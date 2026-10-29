@@ -1,0 +1,14 @@
+# Virtual workspace for the sqlite-murmur Rust crates. The lockfile lives
+# here (Cargo.lock); member crates carry no standalone lockfiles so that
+# `cargo test -p <member> --offline --frozen` and the CMake build resolve
+# one dependency closure from murmur-replication/vendor/.
+[workspace]
+members = [
+    "murmur-replication",
+    "murmur-tx",
+    "murmur-query",
+    "murmur-sched",
+    "murmur-policy",
+    "murmur-files",
+]
+resolver = "2"

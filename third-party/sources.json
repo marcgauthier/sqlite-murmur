@@ -55,7 +55,63 @@
     "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
     "working_tree_modified": true,
     "description": "Rust SQLite extension; Murmur transport/membership adapted to cr-sqlite and SQLite metadata, SQL-only client interface",
-    "provenance": "murmur-replication/PROVENANCE.md",
-    "cargo": "murmur-replication/Cargo.lock; locked crates in murmur-replication/vendor/"
+    "provenance": "crates/murmur-replication/PROVENANCE.md",
+    "cargo": "Cargo.lock; locked crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-tx",
+    "version": "1.0.0",
+    "local_source": "/media/marc/2TB/Archives/MURMUR-RUST/replication",
+    "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
+    "working_tree_modified": true,
+    "description": "Reused Murmur transaction-protocol modules (protocol, snapshot, retention, queue, verification, crypto, policies, bridge, files, filefetch, ftp, membership, transport, Backend trait); engine excluded, CRR-adapted downstream",
+    "provenance": "crates/murmur-tx/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-query",
+    "version": "0.1.0",
+    "local_source": "/media/marc/2TB/Archives/MURMUR-RUST/src",
+    "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
+    "working_tree_modified": true,
+    "description": "Query plane (search, subscriptions, schema/migrations, managed keys) ported with sqlite-murmur seams in adapt.rs; sqlite-vec behind default cargo vector feature",
+    "provenance": "crates/murmur-query/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-sched",
+    "version": "0.1.0",
+    "local_source": "/media/marc/2TB/Archives/MURMUR-RUST/src/scheduler.rs",
+    "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
+    "working_tree_modified": true,
+    "description": "Writer scheduler (local/remote/maintenance classes) byte-identical import with minimal error shim; no new vendored crates",
+    "provenance": "crates/murmur-sched/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-policy",
+    "version": "1.0.0",
+    "local_source": "/media/marc/2TB/Archives/MURMUR-RUST/crdt/src/{compare,model}.rs + src/policy.rs (causal kernel extract)",
+    "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
+    "working_tree_modified": true,
+    "description": "Column-policy kernels: byte-identical compare.rs, Value/codec subset, causal projection/join/rebase extract with host-supplied stamps; re-exports murmur_tx::policies; no new vendored crates",
+    "provenance": "crates/murmur-policy/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-files",
+    "version": "0.1.0",
+    "local_source": "/media/marc/2TB/Archives/MURMUR-RUST/replication/src/{files,filefetch,ftp,bridge}.rs (via murmur-tx, no copy)",
+    "commit": "e5a19c25cceaf93375872e3a7f01f05ffc3659ac",
+    "working_tree_modified": true,
+    "description": "File-replication host: Hosts lifecycle + throttled FetchDriver + pragma/adapt layer over canonical murmur-tx files/filefetch/ftp/bridge; SQLite-backed Objects store pending (constraint 9)",
+    "provenance": "crates/murmur-files/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
   }
 ]
