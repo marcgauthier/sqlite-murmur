@@ -1,0 +1,20 @@
+[package]
+name = "murmur-storage"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+# Mirror the CMake option: compile in AEGIS-256 page crypto (EXP2/EXP4).
+aegis256 = []
+
+[dependencies]
+aes-gcm = "=0.10.3"
+hkdf = "=0.12.4"
+sha2 = "=0.10.9"
+rand = "=0.8.8"
+zeroize = "=1.9.1"
+libc = "=0.2.191"

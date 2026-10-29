@@ -10,5 +10,9 @@ members = [
     "murmur-sched",
     "murmur-policy",
     "murmur-files",
+    "murmur-storage",
+    "murmur-storage-api",
+    "murmur-admin",
+    "murmur-admin-bin",
 ]
 resolver = "2"

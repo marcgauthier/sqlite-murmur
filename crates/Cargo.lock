@@ -861,6 +861,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "murmur-admin"
+version = "0.1.0"
+
+[[package]]
+name = "murmur-admin-bin"
+version = "0.1.0"
+dependencies = [
+ "murmur-admin",
+]
+
+[[package]]
 name = "murmur-files"
 version = "0.1.0"
 dependencies = [
@@ -934,6 +945,22 @@ dependencies = [
  "serde",
  "thiserror",
 ]
+
+[[package]]
+name = "murmur-storage"
+version = "0.1.0"
+dependencies = [
+ "aes-gcm",
+ "hkdf",
+ "libc",
+ "rand 0.8.8",
+ "sha2",
+ "zeroize",
+]
+
+[[package]]
+name = "murmur-storage-api"
+version = "0.1.0"
 
 [[package]]
 name = "murmur-tx"

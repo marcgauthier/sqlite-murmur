@@ -1,0 +1,12 @@
+[package]
+name = "murmur-admin-bin"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "murmur_admin_bin"
+path = "src/lib.rs"
+crate-type = ["rlib"]
+
+[dependencies]
+murmur-admin = { path = "../murmur-admin" }

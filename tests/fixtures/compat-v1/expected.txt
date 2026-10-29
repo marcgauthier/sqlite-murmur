@@ -1,0 +1,4 @@
+aes count=200 sum=20100 v7=aes-7
+aegis count=200 sum=20100 v7=aegis-7
+sealed count=250 sum=31375 v7=sealed-7
+inventory={"sealed":true,"seq":2,"kdf":"direct","kdf_time":0,"kdf_memory_kib":0,"kdf_threads":0,"wrap_id":"","current":2,"keys":[{"id":1,"created_nanos":0,"active":false},{"id":2,"created_nanos":0,"active":true}]}

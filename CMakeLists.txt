@@ -24,26 +24,38 @@ if(SQLITE_MURMUR_ENABLE_CRSQLITE)
   include(cmake/CrSqlite.cmake)
 endif()
 
-add_library(sqlite_murmur STATIC src/sqlite_murmur.cpp src/sqlite_murmur_api.cpp src/sqlite_murmur_errors.cpp src/sqlite_murmur_backup.cpp src/sqlite_murmur_keyring.cpp)
+# The storage implementation is Rust (crates/murmur-storage,
+# crates/murmur-storage-api) behind the stable C ABI in include/.
+# sqlite_murmur is therefore a header + link aggregate with no C++ sources.
+add_library(sqlite_murmur INTERFACE)
 add_library(sqlite_murmur::sqlite_murmur ALIAS sqlite_murmur)
 target_include_directories(sqlite_murmur
-  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+  INTERFACE $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+            $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
 )
-target_link_libraries(sqlite_murmur
-  PUBLIC $<BUILD_INTERFACE:sqlite_murmur_sqlite> $<INSTALL_INTERFACE:sqlite_murmur::sqlite3>
-  PRIVATE $<BUILD_INTERFACE:sqlite_murmur_crypto> $<INSTALL_INTERFACE:sqlite_murmur::crypto>
-          $<BUILD_INTERFACE:rocksdb> $<INSTALL_INTERFACE:sqlite_murmur::rocksdb>
-          $<BUILD_INTERFACE:libzstd_static> $<INSTALL_INTERFACE:sqlite_murmur::zstd>
-          Threads::Threads ${CMAKE_DL_LIBS}
-)
-target_compile_options(sqlite_murmur PRIVATE -Wall -Wextra -Wpedantic)
+# Link order is load-bearing for one-pass static linking: the Rust
+# archives (first sqlite3_* users) precede libsqlite_murmur_sqlite.a,
+# whose single amalgamation object then resolves every later SQLite
+# reference (including the cr-sqlite/murmur archives appended below).
+# OpenSSL/RocksDB/zstd likewise follow their users.
+include(cmake/MurmurStorage.cmake)
+include(cmake/MurmurStorageApi.cmake)
+target_link_libraries(sqlite_murmur INTERFACE
+  $<BUILD_INTERFACE:storage_rust> $<INSTALL_INTERFACE:sqlite_murmur::murmur_storage>
+  $<BUILD_INTERFACE:storage_api_rust> $<INSTALL_INTERFACE:sqlite_murmur::murmur_storage_api>)
 
 if(SQLITE_MURMUR_ENABLE_AEGIS256)
-  target_link_libraries(sqlite_murmur PRIVATE
+  target_link_libraries(sqlite_murmur INTERFACE
     $<BUILD_INTERFACE:aegis> $<INSTALL_INTERFACE:sqlite_murmur::aegis>)
-  target_compile_definitions(sqlite_murmur PRIVATE SQLITE_MURMUR_HAS_AEGIS256=1)
 endif()
+
+target_link_libraries(sqlite_murmur INTERFACE
+  $<BUILD_INTERFACE:sqlite_murmur_sqlite> $<INSTALL_INTERFACE:sqlite_murmur::sqlite3>
+  $<BUILD_INTERFACE:sqlite_murmur_crypto> $<INSTALL_INTERFACE:sqlite_murmur::crypto>
+  $<BUILD_INTERFACE:rocksdb> $<INSTALL_INTERFACE:sqlite_murmur::rocksdb>
+  $<BUILD_INTERFACE:libzstd_static> $<INSTALL_INTERFACE:sqlite_murmur::zstd>
+  Threads::Threads ${CMAKE_DL_LIBS}
+)
 
 if(SQLITE_MURMUR_BUILD_TESTS)
   enable_testing()
@@ -74,12 +86,9 @@ if(SQLITE_MURMUR_BUILD_TESTS)
   add_executable(sqlite_murmur_concurrent_test tests/concurrent.cpp)
   target_link_libraries(sqlite_murmur_concurrent_test PRIVATE sqlite_murmur)
   add_test(NAME sqlite_murmur_concurrent COMMAND sqlite_murmur_concurrent_test)
-  add_executable(sqlite_murmur_storage_test tests/storage_concurrency.cpp src/sqlite_murmur_backup.cpp src/sqlite_murmur_keyring.cpp src/sqlite_murmur_api.cpp)
-  target_include_directories(sqlite_murmur_storage_test PRIVATE include)
-  target_link_libraries(sqlite_murmur_storage_test PRIVATE
-    sqlite_murmur_sqlite sqlite_murmur_crypto rocksdb libzstd_static Threads::Threads ${CMAKE_DL_LIBS})
+  add_executable(sqlite_murmur_storage_test tests/storage_concurrency.cpp)
+  target_link_libraries(sqlite_murmur_storage_test PRIVATE sqlite_murmur)
   if(SQLITE_MURMUR_ENABLE_AEGIS256)
-    target_link_libraries(sqlite_murmur_storage_test PRIVATE aegis)
     target_compile_definitions(sqlite_murmur_storage_test PRIVATE SQLITE_MURMUR_HAS_AEGIS256=1)
   endif()
   add_test(NAME sqlite_murmur_storage_concurrency COMMAND sqlite_murmur_storage_test)
@@ -93,30 +102,41 @@ if(SQLITE_MURMUR_BUILD_TESTS)
   add_executable(sqlite_murmur_keyring_test tests/keyring.cpp)
   target_link_libraries(sqlite_murmur_keyring_test PRIVATE sqlite_murmur)
   add_test(NAME sqlite_murmur_keyring COMMAND sqlite_murmur_keyring_test)
-  # murmur-admin offline CLI (WP-D D3a) + in-process suite. Built with tests
-  # so ctest gates it; install wiring follows with the D2 keys subcommand.
-  add_executable(murmur-admin tools/murmur-admin/main.cpp tools/murmur-admin/admin.cpp)
-  target_link_libraries(murmur-admin PRIVATE sqlite_murmur sqlite_murmur_crsqlite_static
-    $<$<BOOL:${SQLITE_MURMUR_ENABLE_AEGIS256}>:aegis> Threads::Threads)
-  target_compile_options(murmur-admin PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_executable(murmur-admin-tests tools/murmur-admin/tests/admin.cpp tools/murmur-admin/admin.cpp)
-  target_link_libraries(murmur-admin-tests PRIVATE sqlite_murmur sqlite_murmur_crsqlite_static rocksdb
-    $<$<BOOL:${SQLITE_MURMUR_ENABLE_AEGIS256}>:aegis> Threads::Threads)
-  target_compile_options(murmur-admin-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
-  add_test(NAME murmur_admin COMMAND murmur-admin-tests)
+  add_executable(sqlite_murmur_compat_test tests/compat.cpp)
+  target_link_libraries(sqlite_murmur_compat_test PRIVATE sqlite_murmur)
+  if(SQLITE_MURMUR_ENABLE_AEGIS256)
+    target_compile_definitions(sqlite_murmur_compat_test PRIVATE SQLITE_MURMUR_HAS_AEGIS256=1)
+  endif()
+  add_test(NAME sqlite_murmur_compat
+    COMMAND sqlite_murmur_compat_test ${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/compat-v1)
+  # murmur-admin offline CLI (WP-D D3a, Rust) + in-process suite. Built
+  # with tests so ctest gates it. The CLI executable has no C++ sources:
+  # `main` comes from the admin_bin_rust archive.
+  include(cmake/MurmurAdmin.cmake)
+  # The executable's only "source" is the archive providing `main`.
+  add_executable(murmur-admin $<TARGET_FILE:admin_bin_rust>)
+  set_target_properties(murmur-admin PROPERTIES LINKER_LANGUAGE CXX)
+  target_include_directories(murmur-admin PRIVATE tools/murmur-admin)
+  target_link_libraries(murmur-admin PRIVATE admin_bin_rust admin_rust sqlite_murmur)
+  # The in-process suite builds CRR fixtures, so it needs cr-sqlite.
+  if(SQLITE_MURMUR_ENABLE_CRSQLITE)
+    add_executable(murmur-admin-tests tools/murmur-admin/tests/admin.cpp)
+    target_include_directories(murmur-admin-tests PRIVATE tools/murmur-admin)
+    target_link_libraries(murmur-admin-tests PRIVATE admin_rust sqlite_murmur rocksdb)
+    target_compile_options(murmur-admin-tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME murmur_admin COMMAND murmur-admin-tests)
+  endif()
 endif()
 
 if(SQLITE_MURMUR_ENABLE_MURMUR)
   include(cmake/MurmurReplication.cmake)
 endif()
 if(SQLITE_MURMUR_ENABLE_CRSQLITE)
-  target_compile_definitions(sqlite_murmur PRIVATE SQLITE_MURMUR_HAS_CRSQLITE=1)
-  target_link_libraries(sqlite_murmur PRIVATE
+  target_link_libraries(sqlite_murmur INTERFACE
     $<BUILD_INTERFACE:sqlite_murmur_crsqlite_static> $<INSTALL_INTERFACE:sqlite_murmur::crsqlite_static>)
 endif()
 if(SQLITE_MURMUR_ENABLE_MURMUR)
-  target_compile_definitions(sqlite_murmur PRIVATE SQLITE_MURMUR_HAS_MURMUR=1)
-  target_link_libraries(sqlite_murmur PRIVATE
+  target_link_libraries(sqlite_murmur INTERFACE
     $<BUILD_INTERFACE:murmur_rust> $<INSTALL_INTERFACE:sqlite_murmur::murmur_rust>)
 endif()
 
@@ -153,8 +173,7 @@ if(sqlite_murmur_top_level)
   add_subdirectory(examples/consumer)
 endif()
 
-install(TARGETS sqlite_murmur EXPORT sqlite_murmurTargets
-  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR})
+install(TARGETS sqlite_murmur EXPORT sqlite_murmurTargets)
 install(FILES include/sqlite_murmur.h include/sqlite_murmur_errors.h include/sqlite_murmur_subscribe.h include/sqlite_murmur_backup.h include/sqlite_murmur_keyring.h third-party/sqlite/sqlite3.h DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(EXPORT sqlite_murmurTargets
   NAMESPACE sqlite_murmur:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/sqlite_murmur)

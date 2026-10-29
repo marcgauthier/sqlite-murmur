@@ -1,0 +1,13 @@
+[package]
+name = "murmur-storage-api"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["rlib"]
+
+[features]
+default = []
+# Mirror the CMake options: compile in the extension initializers.
+crsqlite = []
+murmur = []

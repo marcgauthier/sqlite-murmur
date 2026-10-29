@@ -113,5 +113,41 @@
     "provenance": "crates/murmur-files/PROVENANCE.md",
     "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
     "dir": "crates"
+  },
+  {
+    "name": "murmur-storage",
+    "version": "0.1.0",
+    "local_source": "sqlite-murmur src/sqlite_murmur_*.cpp (in-repo C++ port; no archive source)",
+    "description": "Rust port of the storage core: error taxonomy, keyring envelope, backup, encrypted RocksDB VFS; stable C ABI in include/",
+    "provenance": "crates/murmur-storage/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-storage-api",
+    "version": "0.1.0",
+    "local_source": "sqlite-murmur src/sqlite_murmur_api.cpp (in-repo C++ port; no archive source)",
+    "description": "Rust port of integrated open/close; own staticlib so minimal consumers never reference extension initializers",
+    "provenance": "crates/murmur-storage-api/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-admin",
+    "version": "0.1.0",
+    "local_source": "tools/murmur-admin/admin.cpp (in-repo C++ port; no archive source)",
+    "description": "Rust port of the offline admin CLI (verify/restore/status/inspect/repair/keys/rekey); C ABI in tools/murmur-admin/admin.h",
+    "provenance": "crates/murmur-admin/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
+  },
+  {
+    "name": "murmur-admin-bin",
+    "version": "0.1.0",
+    "local_source": "tools/murmur-admin/main.cpp (in-repo C++ port; no archive source)",
+    "description": "CLI entry point: provides main, delegates to murmur_admin::admin_main",
+    "provenance": "crates/murmur-admin-bin/PROVENANCE.md",
+    "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
+    "dir": "crates"
   }
 ]

@@ -650,6 +650,7 @@ set(SOURCES
         db/blob/prefetch_buffer_collection.cc
         db/builder.cc
         db/c.cc
+        db/c_murmur_ext.cc
         db/column_family.cc
         db/compaction/compaction.cc
         db/compaction/compaction_iterator.cc

@@ -14,6 +14,7 @@
 
 #include <rocksdb/db.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -50,6 +51,166 @@ void require(bool ok, const std::string &msg) {
 
 bool contains(const std::string &hay, const std::string &needle) {
     return hay.find(needle) != std::string::npos;
+}
+
+// Adapters preserving the old in-process call shape over the Rust C ABI
+// (tools/murmur-admin/admin.h): options keep their field names, capture
+// buffers feed the assertion streams. The scenarios below are unchanged.
+struct Capture {
+    char *out = nullptr;
+    char *err = nullptr;
+    ~Capture() {
+        murmur_admin_free_str(out);
+        murmur_admin_free_str(err);
+    }
+    Capture(const Capture &) = delete;
+    Capture &operator=(const Capture &) = delete;
+    Capture() = default;
+    std::string outs() const { return out ? out : ""; }
+    std::string errs() const { return err ? err : ""; }
+};
+
+struct AdminOpts {
+    int json = 0;
+    int is_backup = 0;
+    std::string key_hex;
+    std::string key_file;
+    std::string new_key_hex;
+    std::string new_key_file;
+    int fresh_node = 0;
+    int fresh_db = 0;
+    std::string fresh_node_hex;
+    std::string fresh_db_hex;
+    murmur_admin_opts_t c() const {
+        murmur_admin_opts_t o{};
+        o.json = json;
+        o.is_backup = is_backup;
+        o.key_hex = key_hex.empty() ? nullptr : key_hex.c_str();
+        o.key_file = key_file.empty() ? nullptr : key_file.c_str();
+        o.new_key_hex = new_key_hex.empty() ? nullptr : new_key_hex.c_str();
+        o.new_key_file =
+            new_key_file.empty() ? nullptr : new_key_file.c_str();
+        o.fresh_node = fresh_node;
+        o.fresh_db = fresh_db;
+        o.fresh_node_hex =
+            fresh_node_hex.empty() ? nullptr : fresh_node_hex.c_str();
+        o.fresh_db_hex =
+            fresh_db_hex.empty() ? nullptr : fresh_db_hex.c_str();
+        return o;
+    }
+};
+
+using AdminKey = murmur_admin_key_t;
+
+inline AdminKey admin_parse_key_hex(const std::string &hex) {
+    AdminKey k{};
+    murmur_admin_parse_key_hex(hex.c_str(), &k);
+    return k;
+}
+
+inline void admin_wipe(AdminKey &k) { murmur_admin_wipe_key(&k); }
+
+inline bool admin_parse_id16(const std::string &hex,
+                             unsigned char out[16]) {
+    return murmur_admin_parse_id16(hex.c_str(), out) != 0;
+}
+
+inline bool admin_ensure_registered(const std::string &key_hex,
+                                    std::ostringstream &err) {
+    Capture c;
+    const bool ok =
+        murmur_admin_ensure_registered(key_hex.c_str(), &c.err) != 0;
+    err << c.errs();
+    return ok;
+}
+
+inline bool admin_store_locked(const std::string &dir, std::string &detail) {
+    Capture c;
+    const bool locked = murmur_admin_store_locked(dir.c_str(), &c.out) != 0;
+    detail = c.outs();
+    return locked;
+}
+
+inline int admin_copy_tree(const std::string &src, const std::string &dest,
+                           std::string &msg) {
+    Capture c;
+    const int rc =
+        murmur_admin_copy_tree(src.c_str(), dest.c_str(), &c.out);
+    msg = c.outs();
+    return rc;
+}
+
+inline int admin_cmd_run2(int (*cmd)(const char *, const char *,
+                                    const murmur_admin_opts_t *, char **,
+                                    char **),
+                          const std::string &a, const std::string &b,
+                          const AdminOpts &o, std::ostringstream &out,
+                          std::ostringstream &err) {
+    murmur_admin_opts_t co = o.c();
+    Capture c;
+    const int rc = cmd(a.c_str(), b.c_str(), &co, &c.out, &c.err);
+    out << c.outs();
+    err << c.errs();
+    return rc;
+}
+
+inline int admin_cmd_run1(int (*cmd)(const char *,
+                                    const murmur_admin_opts_t *, char **,
+                                    char **),
+                          const std::string &target, const AdminOpts &o,
+                          std::ostringstream &out, std::ostringstream &err) {
+    murmur_admin_opts_t co = o.c();
+    Capture c;
+    const int rc = cmd(target.c_str(), &co, &c.out, &c.err);
+    out << c.outs();
+    err << c.errs();
+    return rc;
+}
+
+inline int admin_cmd_verify(const std::string &target, const AdminOpts &o,
+                            std::ostringstream &out, std::ostringstream &err) {
+    return admin_cmd_run1(murmur_admin_cmd_verify, target, o, out, err);
+}
+
+inline int admin_cmd_restore(const std::string &backup, const std::string &dest,
+                             const AdminOpts &o, std::ostringstream &out,
+                             std::ostringstream &err) {
+    return admin_cmd_run2(murmur_admin_cmd_restore, backup, dest, o, out,
+                          err);
+}
+
+inline int admin_cmd_status(const std::string &dir, const AdminOpts &o,
+                            std::ostringstream &out, std::ostringstream &err) {
+    return admin_cmd_run1(murmur_admin_cmd_status, dir, o, out, err);
+}
+
+inline int admin_cmd_inspect(const std::string &dir, const AdminOpts &o,
+                             std::ostringstream &out, std::ostringstream &err) {
+    return admin_cmd_run1(murmur_admin_cmd_inspect, dir, o, out, err);
+}
+
+inline int admin_cmd_repair(const std::string &dir, const AdminOpts &o,
+                            std::ostringstream &out, std::ostringstream &err) {
+    return admin_cmd_run1(murmur_admin_cmd_repair, dir, o, out, err);
+}
+
+inline int admin_cmd_keys(const std::string &dir, const AdminOpts &o,
+                          std::ostringstream &out, std::ostringstream &err) {
+    return admin_cmd_run1(murmur_admin_cmd_keys, dir, o, out, err);
+}
+
+inline int admin_cmd_rekey(const std::string &dir, const AdminOpts &o,
+                           std::ostringstream &out, std::ostringstream &err) {
+    return admin_cmd_run1(murmur_admin_cmd_rekey, dir, o, out, err);
+}
+
+inline int admin_main(int argc, char **argv, std::ostringstream &out,
+                      std::ostringstream &err) {
+    Capture c;
+    const int rc = murmur_admin_main(argc, argv, &c.out, &c.err);
+    out << c.outs();
+    err << c.errs();
+    return rc;
 }
 
 AdminOpts test_opts() {
@@ -1180,14 +1341,17 @@ int main() {
                         "meta:keyring.REKEY left behind after rekey");
                 delete rdb;
             }
-            sqlite_murmur_keyring ring{};
+            sqlite_murmur_keyring_rs_t *ring = nullptr;
             const auto *binding = reinterpret_cast<const unsigned char *>(store_id_str.data());
-            int env_rc = sqlite_murmur_keyring_open(
+            int env_rc = sqlite_murmur_keyring_rs_open(
                 reinterpret_cast<const unsigned char *>(env_bytes.data()), env_bytes.size(),
-                k_new.bytes, nullptr, binding, binding, ring);
+                k_new.bytes, nullptr, binding, binding, &ring);
             require(env_rc == SQLITE_OK, "new master cannot open envelope");
-            require(ring.current == 1, "rekeyed active key id is not 1");
-            sqlite_murmur_keyring_destroy(ring);
+            std::uint32_t current = 0;
+            require(ring && sqlite_murmur_keyring_rs_current(ring, &current) == SQLITE_OK,
+                    "cannot read rekeyed current id");
+            require(current == 1, "rekeyed active key id is not 1");
+            sqlite_murmur_keyring_rs_destroy(ring);
 
             // (i) File indirection (--key-file and --new-key-file)
             const std::string old_kf = (root / "old.key").string();

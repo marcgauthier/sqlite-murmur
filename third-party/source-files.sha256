@@ -1047,6 +1047,7 @@
 098907679210ffb5e1c2406b098c5a864188f787e785bbac5147abc526b9f3af  third-party/rocksdb/java/src/test/java/org/rocksdb/OptionsUtilTest.java
 09919621ec4b269f90c0f7bc3e5ab7087a31e2ed0053c6f4300679828ad5308d  third-party/openssl/crypto/dso/dso_openssl.c
 0992d21e41833da8131376f6c2a8f1f0feb71c770bc5f462c5a2b1615f9ef6bf  crates/murmur-replication/vendor/zerocopy/benches/ref_type_into_ref_dynamic_padding.x86-64.mca
+0993cb41ccdb8c21fe2a8c482bcc9941652b6bab3c8fecc2f884fcc50872a455  crates/murmur-storage-api/src/api.rs
 099570484acd8b263271b80cd6027f1a0ae98d2970acd686f63db6790834a55b  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_onecore-api-ms-win-core-string-l2-1-0.a
 0995d60a863e6496d6d2923f3ad25fbea98a410e5a2462620d91f48cde1ec610  crates/murmur-replication/vendor/zerocopy/benches/write_to_suffix_static_size.x86-64
 0996030424a37b8d3e0eab63bca69ef5a5c55295c7ce39e49dd2a264aaea5caf  crates/murmur-replication/vendor/quinn-proto/src/tests/token.rs
@@ -1406,6 +1407,7 @@
 0ca32c118270c05bea678101010555f42fccd20d2f2d38f45aa52d1dedeb11dc  third-party/zstd/tests/cli-tests/README.md
 0caac64486c0eb9c076553c0502d468fbc477602a9a2595165a1dcd95524e5ff  crates/murmur-replication/vendor/thiserror/tests/ui/from-backtrace-backtrace.rs
 0cab8048b4a37a676b00c5f68414c235573c920423d9a2f4dfac887a6f805399  crates/murmur-replication/vendor/thiserror/tests/ui/display-underscore.rs
+0cae94e45239a22784ebe68ef526570e38cf8c66d4f3ca5110b192c807da14e1  third-party/rocksdb/CMakeLists.txt
 0caed62cd744cf1a33ddd3ea42f601e95379426cdb2de31efedf3fa7cac37cf1  crates/murmur-replication/vendor/ring/src/arithmetic/limbs512/mod.rs
 0caf85ba195019c866e0a1cd59608defc1836ae533c89f795562418f1243913b  crates/murmur-replication/vendor/web-sys/src/features/gen_CacheStorage.rs
 0cb142029b544a91125912c268c981d47025679e04a0034c7b328835cc588f9c  third-party/rocksdb/db/merge_helper.cc
@@ -2560,6 +2562,7 @@
 17a754e4e5e079b630f54bbdeff98acd7fb54b78b7f4ba12121f12fcb5db8c6e  crates/murmur-replication/vendor/zstd-sys/zstd/build/cmake/lib/cmake_uninstall.cmake.in
 17a754e4e5e079b630f54bbdeff98acd7fb54b78b7f4ba12121f12fcb5db8c6e  third-party/zstd/build/cmake/lib/cmake_uninstall.cmake.in
 17ab347d3862e40e853e7602e0069f866fa3f23d8ad3a029f3aeff5d3a2a11b4  third-party/openssl/test/recipes/03-test_internal_rsa_sp800_56b.t
+17aea38f79b001c8de7ffda83e30181b2817327213b737fa9a8d03db442c310e  crates/murmur-storage/src/store_ctl.rs
 17affd9e2e80b05e6446941f3380974860076257a7f6c7985c332c4b9699579f  third-party/openssl/demos/signature/EVP_EC_Signature_demo.h
 17b04c9de5c8911d4a7508da79b6885e4b9ad40f97313b316c0830962db70367  third-party/openssl/test/recipes/15-test_ml_dsa_codecs_data/prv-87-bare-seed.pem
 17b3e5c274e91140523f3528d41fffd05dc39ac2923a92ba31b9b7c4e2301e21  third-party/openssl/demos/bio/Makefile
@@ -3564,6 +3567,7 @@
 20fbdf0066f8d97729bae5c44017f13cbc011f72ef086513221b7dc79fe20e2a  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/generated-src/mac-x86_64/crypto/fipsmodule/rsaz-4k-avx512.S
 2102b223aa8d3963274f0fd9bc97de39681f33699961470c31057c2d584ae7c1  third-party/openssl/test/threadstest.c
 21068eb8db71c992e605e25288d7f37853e14dc92e9bc0d87b42453b87a8d260  third-party/rocksdb/include/rocksdb/utilities/option_change_migration.h
+2106a2a60c1300754a397f647b127de06963b34cdd1f45bba38b610efe20ddd1  crates/murmur-storage-api/PROVENANCE.md
 21075b17ec5ee11879f44154c1311e413cb114047b39aa2ef62d739457c617ca  crates/murmur-replication/vendor/wasi/.gitmodules
 21088a2c1738acecbaad6527a110b0838af46d88da9b313cad871541fc265c70  third-party/openssl/doc/man3/BIO_f_ssl.pod
 2108cf48c98ed0a7833ec73b841fccc254c733453a7e69127b0255541bbc9572  crates/murmur-replication/vendor/syn-2.0.119/src/attr.rs
@@ -7159,6 +7163,7 @@
 41e5006b037a8c9c01c6798af54777b65478f0daf0fb768b51de7d8ecd116cd9  third-party/rocksdb/db/flush_job_test.cc
 41e8109a27c7d24fe32a05b61567b5997416853d5cfc3c78d6fe65ad125be31d  third-party/openssl/crypto/x509/x509_err.c
 41e92c8bcea041dd847a78135da8f62a4f52ac7afd6424993945437d994c282b  crates/murmur-replication/vendor/web-sys/src/features/gen_PluginArray.rs
+41e9574d0a7e6b3ddca2c75c86894e7d6d968b28a49b4cfa14653087472e3042  crates/murmur-storage/build.rs
 41eaa65110287a9464924629fd20efc322a72682f7497eca0691ce8253f5d37c  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_onecoreuap-api-ms-win-core-xstate-l2-1-0.a
 41f33f80dbc25391a47c474432362597a4ed1b45bae3a1b817fa8b5d7548dad7  crates/murmur-replication/vendor/hmac/tests/data/md5.blb
 41f54fabf968b6ba19a6fbb41372f7e86e1ccd221622591816fe48bcc3797369  crates/murmur-replication/vendor/hashbrown-0.16.1/src/raw_entry.rs
@@ -7618,6 +7623,7 @@
 461bf8d208f67b7bf2faf98b72754dc7aa386d0b2bbeeab3157db98aa6225d22  crates/murmur-replication/vendor/icu_properties_data/data/property_binary_radical_v1.rs.data
 46204cae9d338421d78d971d26672e89a0710db14939775c18be0d6a2468d0dc  third-party/rocksdb/file/filename.h
 462173c05c85f11d8a78a52e4c9c8dcc5a7c0488b61d7124283da3bab859df28  crates/murmur-replication/vendor/tokio/tests/io_copy.rs
+46257d64b6a76f979610753353cc2c8f86bb77eac90754eb158ef1e021283a02  crates/murmur-storage/src/ffi_aegis.rs
 46258e99a4e3acd903dc32538de96045f0b4732e0d20894d26a0dbce69cd28f4  third-party/rocksdb/docs/static/images/kv-checksum/WAL-read.png
 462ae121c1548c2c0fe30710544ffd5b090947c7044ee4bb4844179a85382c66  crates/murmur-replication/vendor/tokio/tests/rt_unstable_metrics.rs
 4632f2c56d9a7bac1992c3951eb6d00a846b20e0959537260e388d08da630c76  crates/murmur-replication/vendor/rand-0.8.8/src/distributions/mod.rs
@@ -8254,6 +8260,7 @@
 4c32609a489dd938a49328b5637cb3bafb96437f2f9f269ab66d7d3cb90247f6  third-party/cr-sqlite/vendor/rustix-0.38.13/src/maybe_polyfill/no_std/os/windows/io/raw.rs
 4c35fa1f0e33c100b947721ebee4746a6c8a9a9e470ac1b3d4098b932d302b04  crates/murmur-replication/vendor/pem/benches/pem_benchmark.rs
 4c367e39d560ae169afcf1b15c618011f5a8c198cab1504a86b4576d5c3fdb30  crates/murmur-replication/vendor/tracing/src/macros.rs
+4c36b6706d83532054855e5e5e78883463509ebce5c55860a2b1948defbd5214  crates/murmur-admin/Cargo.toml
 4c370d7ec37b8c9cb32c7334db454c6d0a9803c1969f628d7a0436e844fc5a6c  third-party/rocksdb/docs/_posts/2015-06-12-rocksdb-in-osquery.markdown
 4c37c15315821c39274872e71f4c463902b70e66eded055e92470ae9808d7ec5  third-party/openssl/doc/man1/openssl-rehash.pod.in
 4c399e2d32d3d53359361a89ef059d4751412d8c68f5a0c2396462b34681e7bb  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_wldap32.a
@@ -8535,6 +8542,7 @@
 4eb05a431af0ddb8c78076e07f82db11a40ff69ceb4fdf28675fd820dd3c2cff  third-party/openssl/doc/designs/quic-design/connection-id-cache.md
 4eb0b4cdd0a9b089d1c9f6a25ad1ca97be28a38b7b07a705ec605b773f63f880  crates/murmur-replication/vendor/rustix/src/backend/libc/rand/types.rs
 4eb0d7b048d455e2531e34dab4bfa4661e71034f486f1a585e533f9e10997fcb  third-party/openssl/test/recipes/91-test_pkey_check.t
+4eb1081eedc67ca336e77f33e8908ce4ec79066b3602ca7b66ce040ffedc2087  crates/murmur-storage-api/Cargo.toml
 4eb5e66070576b0978a7c0dc1d8f13fa29928cf022389cd66badcb7f3f5f014a  crates/murmur-replication/vendor/rustix/src/backend/linux_raw/arch/mips.rs
 4eb71e08030eca03ea393f2688f4e43899e226165348c8b0a239184fdabbf53c  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_onecore-api-ms-win-core-namedpipe-l1-1-0.a
 4eb906d0ac2970afc03aa42c630ca20e4b9a10250b75677f8f4a59bcc0fb8c9a  crates/murmur-replication/vendor/find-msvc-tools/src/vs_instances.rs
@@ -8843,6 +8851,7 @@
 5199b758b2d4f68ebf14c7d514a790e5026a8d2f0ed7f56c45344c114672f49b  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/x86_att/sha3/sha3_keccak4_f1600.S
 519b11b13120d305912257408e5d94241c33aabe915f7c46cbcb7d3ae4659332  crates/murmur-replication/vendor/web-sys/src/features/gen_CssKeyframesRule.rs
 519de7d2d5510738e9ea5ffe5cc4f594ab80b840151cf7ba961ac7844930d86a  crates/murmur-replication/vendor/vcpkg/test-data/normalized/installed/vcpkg/info/liblzma_5.2.3-2_x64-windows-static.list
+519e112aefcf95e8f9688493cb3839cb13b2afb6fb206cace6ef7f48f0ac9a9a  crates/murmur-storage/src/crypto.rs
 519e704b5b5b863c0a1b6691f46457c5ffe990b9f2c7223f5dee4a5aa268fb40  third-party/rocksdb/db_stress_tool/db_stress_env_wrapper.h
 519f0a126791dba1c1b0160c1921440f9d597a24e642c6c7472017bcfd630207  crates/murmur-replication/vendor/icu_collections/src/codepointtrie/mod.rs
 51a1ffd411770d1e32399ec23feb5f61be362bbed34e100eb7509f8496224e1a  crates/murmur-replication/vendor/once_cell/tests/it/unsync_lazy.rs
@@ -9000,7 +9009,6 @@
 53061539cba276982580d0e6ddb0ed4420c418c1f033c1e9925e867547dc5dc5  crates/murmur-replication/src/file_store.rs
 5309f4538b1df611436f7bfba7409c725161b6f841b1bbf8d9890ae185de7d88  crates/murmur-replication/vendor/base64-0.22.1/tests/encode.rs
 5309f4538b1df611436f7bfba7409c725161b6f841b1bbf8d9890ae185de7d88  crates/murmur-replication/vendor/base64/tests/encode.rs
-530a44c4a6a95a946c319f07c248e0494fa6f424200fd2b75129c5ccd252902e  crates/Cargo.lock
 530a8c2a4776d58c388ae01ce45b74244c1f9ee516091f9b2b10985cde42aa7d  third-party/openssl/providers/implementations/include/prov/kdfexchange.h
 530b4ea7681b90e5d929dd916d2b7174f8214d5cf88b17fd091dc1659d579b7b  crates/murmur-replication/vendor/web-sys/src/features/gen_RtcRtpCapabilities.rs
 530b7dde358f4e693cc0f3b56fc448a2c1f805c24260729e898dfb9720e5a5a5  third-party/openssl/apps/lib/apps_opt_printf.c
@@ -9779,6 +9787,7 @@
 5ab646f3760edf98c06b6c64bf95038e1c601be1b79503fe0b1d0758c907ca0e  crates/murmur-replication/vendor/cmake/.cargo_vcs_info.json
 5ab8ea352510350036e7550d4b3ce6ff6cc49785063b65cbfe164bc7582b9b34  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_onecoreuap-api-ms-win-security-provider-ansi-l1-1-0.a
 5ababe8c8b357bf128bacc1af1e729f1ac1946c396889b6e03a24e243757ea7f  crates/murmur-replication/vendor/zerocopy/tests/ui/transmute.nightly.stderr
+5abbfec070c9d2faf5c681de9659ff18589c7dd2f103190cc8e484405a9b9ee4  crates/Cargo.toml
 5ac1b252f43311eeae71d7876e96d667c13f2141d83d5d86b62dbf961efcafef  third-party/openssl/providers/implementations/keymgmt/ec_kmgmt.c
 5ac5858325451e1d70f308ca0bcead5a354d095a7473800c11065231c319c456  third-party/cr-sqlite/vendor/regex-1.9.5/tests/misc.rs
 5ac63cc86ea5ff25ac5b2988f172efa9f338ea1214874f16e568c965b210e427  crates/murmur-replication/vendor/utf8_iter/src/lib.rs
@@ -10804,7 +10813,6 @@
 641416ef4ca071ecebea4df802ce962d2fa66d7d4d6fd79ebb4a5bed5a272df7  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_cryptnet.a
 6414465408a5d9c06789f586ddc2f40f8e59f3a1eb19cec5e37df82095012cb2  crates/murmur-replication/vendor/tower/src/limit/rate/mod.rs
 641454e135aa030f835088d98b42c1b5ed9ca1d605fe9f30da94de9bd7624e7c  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_mfsensorgroup.a
-6415be8d654558b13002563c90388cc9556e2837421fcc614c2ec84437a7aa11  crates/Cargo.toml
 641903d385581e76f31ef8c991d83c2a5d7fbbc2879d93909c539037e4e1e3e2  crates/murmur-replication/vendor/percent-encoding/src/lib.rs
 64197d80127a7f2fd6d2a86dce0d22d279859bc30cc50990acc484e1f2268def  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_wdsmc.a
 641af0908151a196d6c872e83344e9e9d090b30cbe058762569c27ff25507a92  crates/murmur-replication/vendor/icu_locale_core/.cargo_vcs_info.json
@@ -12112,6 +12120,7 @@
 6fe06a8af64e7533cfc4d7ceb2db2bafd18f80f14bca15546567a1d671a82510  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/x86_att/sm2/bignum_half_sm2.S
 6fe1ff25953f130481f227276cd9d26b1cfb0838287455bfa3efd6bb7f1a4062  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/arm/p256/p256_scalarmul.S
 6fe4c069f0b9add42cf483f80ab2dfc590ea0fd98d6706339b177710c1d289aa  third-party/openssl/ssl/quic/quic_port_local.h
+6fe9be3757b63b12fe93cf22ad31374de270efd61255205ee604baa96802df78  crates/murmur-admin-bin/src/lib.rs
 6fe9f5349f9a694b391f309f208235c1d4669430d3f051ef64467576e91df7a1  third-party/cr-sqlite/vendor/linux-raw-sys-0.4.7/src/s390x/prctl.rs
 6feb77484efda662d4d6596e0ed340b837faa1d7a4846ff5f1989748fb0e9f09  third-party/rocksdb/table/block_based/filter_policy.cc
 6fec59d28edd137fbf27b9284b6aee3cd2cbf9f7af7260edccb6bf43ac75be36  third-party/openssl/test/dsa_no_digest_size_test.c
@@ -12183,7 +12192,6 @@
 708c5b394d77eef855e38e5def7c20dc68c5eb3f42559da9a2410216b0dc804b  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_windowsapp-api-ms-win-security-base-l1-2-0.a
 708d52ecd7bb5ca83d243ddecb132db0693b0809f65c093eabda549156934030  third-party/openssl/include/openssl/async.h
 708d618960d715ce259271fb3302aadff5a3fb517dad9c984612fc25cde7183a  crates/murmur-replication/vendor/rsqlite-vfs/src/lib.rs
-708dc36e4d97d1e85ad57bd404dcfe97017855b8dd1c35e61ba8659beaf38aaf  third-party/rocksdb/CMakeLists.txt
 708e28795577e16bad2743e659abf3d3834dba315867bb084ded829b1b8e2cf8  third-party/rocksdb/java/GetBenchmarks.md
 7092d745039c3614851ee3be3f3515104cd868d1135bfaeef67f3ae29d400ced  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_mincore-api-ms-win-core-memory-l1-1-5.a
 70932e703934ae02887f9330a5f294e9e3437bb3dd0d17c60236dd10428077fb  crates/murmur-replication/vendor/web-sys/src/features/gen_KeyIdsInitData.rs
@@ -12814,6 +12822,7 @@
 76285acc08ccb8a0a93a3cbd58c3e12cbcde61720ad676be181fff7b1f278df3  crates/murmur-replication/vendor/thiserror-impl/src/expand.rs
 7629ae50d3037813d38a95c74441d4e3921dc8fb304bcd2627fd11b8d61110be  crates/murmur-replication/vendor/icu_normalizer/Cargo.toml.orig
 762bc2e3e520347a5741bdfe33b184d132e436385606a055c88877fe5f1cb972  crates/murmur-replication/vendor/flagset/rust-toolchain.toml
+762eb7479a5ff26f6057bcee38e709343c8596cd18d624b6923039fcbbf01a8d  crates/murmur-storage/PROVENANCE.md
 76306f779d76f629e141ecbcafc051e2179e2660fa016a0e34de86f4ba7f60f3  crates/murmur-replication/vendor/tokio/src/sync/set_once.rs
 7632af46066faccc2dba7ecccfa1c22e1a6478b538f17aefb089ce60de441827  third-party/openssl/include/crypto/uierr.h
 763643aea2226a793e963f47d21d92ad5f1f4a476386e5e234b1a9f0971f94e1  crates/murmur-replication/vendor/windows-sys/src/Windows/Win32/NetworkManagement/NetBios/mod.rs
@@ -13702,6 +13711,7 @@
 7e36e85b48a98384db28a1b786381e288a444b55f811ab958fd10fb18810cbb3  third-party/zstd/tests/cli-tests/zstd-symlinks/setup
 7e39dd528ad9f81d1d51c4abc7f3140cfa86e77582bdf82d2fbb7075f2488d61  third-party/openssl/include/crypto/asyncerr.h
 7e3b58de0f502c1a1bf6d27e0e85c654b1189716f7374cec4ed4dd365b13101f  third-party/cr-sqlite/vendor/regex-1.9.5/record/old-bench-log/08-new-memmem/rust-before-01
+7e3c15820f3b936227d0711a75acf6fa9d0a753bb92346515c9de1989c33f1cf  crates/murmur-admin-bin/PROVENANCE.md
 7e3ed1af37fd1a1af1fd8890417efb78eec6ee7aef55bbe9bf2afeda32439c7b  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/crypto/fipsmodule/ec/builtin_curves.h
 7e3f1235f80f01b2db8880bd85bf6808d825623dc889395e8fb31479d7755325  crates/murmur-replication/vendor/web-sys/src/features/gen_HtmlBrElement.rs
 7e43e5ae46ec42715979576250361ed8855f9c39f0d81797bbbb00ed7e439043  third-party/openssl/doc/man7/openssl-threads.pod
@@ -13790,6 +13800,7 @@
 7f06891c32e42072951daf15af1c7d05fddd0f3b060de2ee7bf7570a653201cb  crates/murmur-replication/vendor/ring/src/cpu/arm/fuchsia.rs
 7f09de2d155cc9fbc2dc4585f2c134ea3fc04ea9d9b3e31fa2d6bf9fdc0a02a2  crates/murmur-replication/vendor/rustls-webpki/src/data/distrusted/EMOVTLSCAG3B.spki.der
 7f0ee0327dcfbb3df3ed4f0c8caed4bebd4b76bb7407f32f100d660f2a10eabd  third-party/cr-sqlite/vendor/log-0.4.20/src/kv/value.rs
+7f0f83f0814e9d9bd6fc45a0dcf628ab7f393c0f988ea5761b207e91d3fb6b08  crates/murmur-storage/Cargo.toml
 7f0faa9edfcd712619bddf3871ec4a5df17ae066e59595d1892fcd7689056d4a  crates/murmur-replication/vendor/icu_provider/src/request.rs
 7f149286b731ce7df862f91a8c3386c8223027f0e2b59e428698cb812e02c6df  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/crypto/perlasm/x86asm.pl
 7f149dae1ba8fda74bde21edefdd2c768d56f53c618ac70fd191f8699811b2ac  crates/murmur-replication/vendor/web-sys/src/features/gen_ScreenDetails.rs
@@ -14524,6 +14535,7 @@
 86320f1c59406788b63cfbb02d2f4840a6ecc5f7fb27bb8a3ebc3da98ca46f35  third-party/rocksdb/util/cleanable.cc
 8632bcd93cfde1f33a981cc757c5c6abf8a9b73249396358b802b8211f79a5d6  third-party/openssl/test/cmp_client_test.c
 86373a651dbf839f253b8df526f94f32c47b5abc1413115ade804e2d67edaa67  third-party/aegis/src/aegis128l/aegis128l_neon_sha3.c
+863da167500365033c8e6563bc46db923b16adde97970dc40e1f1c59eaae232c  crates/murmur-storage-api/src/lib.rs
 863fa691ed7d27e8767da58d9ee11fd40d6642274b36338ca1074c07964ea2b3  crates/murmur-replication/vendor/thiserror/tests/ui/transparent-struct-source.rs
 86407136a8fd0b3b80aa1cf0d3e5a263f28afcd48a0017049ebe864c0c01bf82  crates/murmur-replication/vendor/aws-lc-sys/builder/cc_builder/universal.rs
 86411f314e116a87f02a01664d19b65572ba11d591627cb340a91d6e4c184437  third-party/openssl/doc/man3/SSL_get0_peer_rpk.pod
@@ -14861,6 +14873,7 @@
 89975b57637b872d75adea6be9a5c08d21fda6f6cf29b01180a2232c0a7d0296  crates/murmur-replication/vendor/semver/tests/util/mod.rs
 899d6f27752b28c53b1a927982e6b457e2fc39413d5e6b35a3007168c40e7b40  crates/murmur-replication/vendor/linux-raw-sys/src/x86_64/io_uring.rs
 899e2e5592eae9b9a8d0e90f24d9899cff1eeb3864cad9b6025bf722515afeb9  crates/murmur-replication/vendor/ring/pregenerated/chacha20_poly1305_x86_64-macosx.S
+899e8688038c6be84b5feafcf038051a8bbbeaeaf3dee0477ca699b0fb33c456  crates/murmur-storage/src/store.rs
 89a12c6584e2cdc05364aef6f6e17f77d0083769633adfab47b5d6793ad884e6  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_windowsapp_downlevel-cabinet.a
 89aa0337edd4951dcb7c2e63f56ae731fc324248f91ee19629249c3d794f3331  third-party/openssl/crypto/x509/x_x509a.c
 89b2666be8354215c63f8af7c92d6aed3a6d309cf384965ae360d351a5007afd  crates/murmur-replication/vendor/syn-2.0.119/src/punctuated.rs
@@ -15101,6 +15114,7 @@
 8bf02c0fddd3a2f98a974185cdc5b1dd06f1c9977a5a2cf8c539d3e774c62746  crates/murmur-replication/vendor/zerocopy-derive/tests/ui/absence_of_deprecated_warning.nightly.stderr
 8bf02c0fddd3a2f98a974185cdc5b1dd06f1c9977a5a2cf8c539d3e774c62746  crates/murmur-replication/vendor/zerocopy-derive/tests/ui/absence_of_deprecated_warning.stable.stderr
 8bf1ccd58cc3d026874c36fe544e5186fda72a74c9a08f0682af7bee1044a635  third-party/openssl/test/cms-examples.pl
+8bf59ca23b51f101c409687c00812e6c93539d226b11deef81ff215bf97024aa  crates/murmur-storage/src/ffi_zstd.rs
 8bf99220ffb43d1c0891679e50bff7c62df64d7db474eb0b90996261ea26e679  third-party/rocksdb/java/src/main/java/org/rocksdb/Holder.java
 8bfa4bf273def86bf1347d094a683be9ef39a588a9e27e968d49109988ca57e6  third-party/cr-sqlite/vendor/winapi-0.3.9/src/um/documenttarget.rs
 8bfc51ebaee78c2ec78328dab57434ea20910ab2b618d7f4d2159eae1e72631a  crates/murmur-replication/vendor/web-sys/src/features/gen_HmacKeyGenParams.rs
@@ -17050,6 +17064,7 @@
 9da2a19810d354fa0ae6b6ce7799e3a69e0eb9b673838232be6813c1b1c4c4b7  third-party/openssl/doc/man3/SSL_CONF_cmd_argv.pod
 9da3dd39b3de45a7928789926e8572d00e1e11a39e6f7289a1349aadce90edba  third-party/cr-sqlite/vendor/libc-0.2.148/src/switch.rs
 9da5fbddac2778ad159863cd5635cd8d84007062d86b4d791c9cfddbb02fd3d0  crates/murmur-replication/vendor/zerocopy/benches/try_ref_from_prefix_dynamic_padding.x86-64.mca
+9da67221611b04c0703fa65626f1da26afacd0288b22adcb3b2b490456987898  crates/murmur-storage/src/abi.rs
 9dac0c6dc091d143ae8f53b02a0094ff1cb975911836b02e3a29609806490af3  third-party/cr-sqlite/vendor/winapi-0.3.9/src/shared/wlantypes.rs
 9dacc21b07c7b58329d86556d27898b9023c61a82a623fdc2d18f5e0b5b18195  third-party/openssl/doc/man3/EVP_RAND.pod
 9dae9e97e48ed78dd0fc4ecf6bd71a31cfcb8e78013a40e159e2073d27851dda  crates/murmur-replication/vendor/rand/.cargo_vcs_info.json
@@ -18165,6 +18180,7 @@ a6e8b689b73e2d3e18ac27a1232470116422918bc33f31ae63d7eb3518303721  crates/murmur-
 a6e8d0506b2d5558b41879d2319136f665342a10bfbf7ced660e46711a36739f  third-party/openssl/util/build.info
 a6eb8896961d3212ac33be8693abe73df27cc422474343bc65d5f868fbdb7d81  crates/murmur-replication/vendor/libc/src/solid/mod.rs
 a6ed95cf9fd326ccbc4eb3471dfdb90bc2f27e409c01ddf50c928cc5959dd2ab  crates/murmur-replication/vendor/windows-sys/src/Windows/Win32/NetworkManagement/NetShell/mod.rs
+a6edd6674e6a001e3fde7ab7ca5ac721dd22c9c7522772484bd0ba73f4b80121  crates/murmur-storage/src/error.rs
 a6f861fbcfbcbe289675b474cb582708bb5b9d4617d10d1e5de3953522db7f62  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/crypto/fipsmodule/md5/asm/md5-armv8.pl
 a6fa02ebaaaf601d7f9ab32e06c328a0a5a172a5da1577bf0a5cc26fb6dc4801  third-party/rocksdb/monitoring/histogram.h
 a705e608b08f1725d90476d4033b5658b6366b653e8c6650179a509de6a4aac6  third-party/rocksdb/util/mutexlock.h
@@ -18843,6 +18859,7 @@ acbbe8c10dc81f648339333c8fa3e0aa787ad5887b105d1947bc522553d87d73  crates/murmur-
 acbbf978dfb0164de14f47c376b75f054bf98b68667be0f34f402082abe82df9  crates/murmur-replication/vendor/windows-sys-0.52.0/src/Windows/Win32/System/EventCollector/mod.rs
 acbc69a1fe7299860f8bd142bc2ff5595a410e1528994139062fc680d1a87e71  third-party/cr-sqlite/vendor/linux-raw-sys-0.4.7/src/mips/system.rs
 acbc69a1fe7299860f8bd142bc2ff5595a410e1528994139062fc680d1a87e71  third-party/cr-sqlite/vendor/linux-raw-sys-0.4.7/src/mips32r6/system.rs
+acbd9de2e6a6a7fb569a8545acf142bae05b2cbccbdc4d1be2397c8638f331ef  crates/murmur-storage/src/ffi_sqlite.rs
 acbe6ca657ac9bd52204a5098a81229c83e3e1b56dc3c40c17e956280fc2b5a7  third-party/openssl/providers/common/der/der_sm2_gen.c.in
 acc5a4922b276bc9801f5fb58539824460cb69b34a575cecbd7eb56b1d3b4de0  third-party/cr-sqlite/vendor/regex-automata-0.3.8/src/util/pool.rs
 acc71bcf41bcc29078f1c92823b12321ee80bf4d26feaae7bb3405f5f4630212  third-party/rocksdb/java/src/main/java/org/rocksdb/RocksMemEnv.java
@@ -19846,6 +19863,7 @@ b55fe6d9d8fc9ae5caaf6dcd600d9e85e2565a5fd7d2ad935ac718ad071b66a8  third-party/cr
 b55fe8e4f0ea8d2a0a580d38666c391482d0e3078e67b244c4cfc3989a260803  crates/murmur-replication/vendor/web-sys/src/features/gen_DecoderDoctorNotificationType.rs
 b56253cfaec8c49b49ce90736dde78025f0b820f2a018edff569bba27e5a5080  crates/murmur-replication/vendor/hmac/Cargo.toml
 b562ca480435eefdb824de386688f98fedfa63e49a67e6ef0a1bfd5bacd85fba  third-party/openssl/providers/implementations/digests/md2_prov.c
+b5636b728e100545dcc798969ecfec5358158ad934716c5e3486dfe5fe5f905f  crates/murmur-storage/src/ffi_rocksdb.rs
 b564e9f6c0d4d37a50037d22b08cc97375b42c2ff0b6d447c5d17f226618c5c6  third-party/openssl/test/ocsp-tests/WINH_ND2.ors
 b56625dd20dd48a8699034d349ef089c540c0ddcbf8a3481d598d101f8b40b78  third-party/cr-sqlite/vendor/libc-0.2.148/src/unix/linux_like/linux/gnu/b32/mod.rs
 b568f1f37a5a1d37a3e981e7c8b7fc4856ca33b2ca0a45bc8e847aaaf7afe485  third-party/rocksdb/LICENSE.leveldb
@@ -20617,6 +20635,7 @@ bc8ff3cae2f799d849105b79091604e1579ae5e8a8fbe19db24c6ccbf48146a4  crates/murmur-
 bc91725626538cee3ec837d1232e5283f32f5f19b684d1625c985bfaf8813766  third-party/rocksdb/file/delete_scheduler_test.cc
 bc92e749753feac9beaeae6e5fd8efe80f8ba31f937a71179ffa2876c903d6b6  third-party/zstd/build/single_file_libs/zstddeclib-in.c
 bc96c32ce486d1c188d3d6472f8ff26577457d2acb6820260ee46e6ed71c068d  crates/murmur-replication/vendor/linux-raw-sys/src/x86_64/elf_uapi.rs
+bc970dd9017cbe9afc5d25a83d85a79cf3a67238556bd802a1f52d63c9c6f122  crates/murmur-storage/src/keyring.rs
 bc981030dab60345a175df1d458788a75e174f5d3093d524381f9f4489aa5347  third-party/openssl/doc/man3/OSSL_trace_enabled.pod
 bc98ff4a709cb75cd9ffedefa8ef251089a49906b98e142d76447ddf4ac098bb  crates/murmur-replication/vendor/futures-util/src/io/write_vectored.rs
 bc9c4bd30d6c9fd46d0b4a73b8215f3ffbf378fa91184879260c9c8cc620701e  crates/murmur-replication/vendor/thiserror/tests/ui/source-struct-unnamed-field-not-error.stderr
@@ -20921,6 +20940,7 @@ bf0436c95d52c5d45ee6c6e1b9c37397d8fca2e5af42189fea0fc42e0504d9c4  crates/murmur-
 bf06635b2cf47da166083c84a4f98586303c1f78866a7c1d3e2880bd12e009e1  third-party/rocksdb/docs/static/images/kv-checksum/Write-batch.png
 bf07cd212da14285f8663df547e4603e62e3984364bd45efe9ee956269406b7d  third-party/rocksdb/utilities/transactions/write_prepared_txn_db.h
 bf0cfbdf926bebfeb42471bf5c9a583581924d4e776de5ca9aa92aeefece740d  third-party/openssl/test/recipes/75-test_quic_srt_gen.t
+bf0dce6e05ad5bab7dd53b73b89d550beae24a53ef845aa5a4bfd18f9d624c47  crates/murmur-storage/src/pool.rs
 bf1057205945209bdc72bce58a5b51298028d11d4fba77a06a43cfb9d5831b59  crates/murmur-replication/vendor/tokio/src/runtime/blocking/sharded.rs
 bf106858d569d3b719a3e9c608402d3a13376a66eb3df4ca15a27ee681ed443a  third-party/openssl/test/recipes/30-test_evp_data/evppkey_ecdsa_rfc6979.txt
 bf1268b0b7cdd7bfb25cb5e27dacab04c258d301c82d47fb1180bffba103f379  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/x86_att/curve25519/bignum_neg_p25519.S
@@ -21990,6 +22010,7 @@ c85f75eba0c14b7dd168dece95e28191fa6351bb7b23a6fad5030017a529e619  third-party/op
 c860188e2b7d4f4a1d79d410e0dff3c2b399f49ddb1d2f3af362a9a6475a43f0  third-party/openssl/include/crypto/cterr.h
 c862698076662cb026e167a95c85edb2356944f7ed177f005b2a16f76539aca8  crates/murmur-replication/vendor/aws-lc-rs/src/evp_pkey.rs
 c863372f937f0bf3c5cf214dd3729a88d450fa67f5d054753c2d9ea31fa84286  crates/murmur-replication/vendor/icu_normalizer/benches/bench.rs
+c8646c168542225baae48978f84dbb252f2c3f7f848bf98f228e49d2d6f2dc0d  third-party/rocksdb/db/c_murmur_ext.cc
 c86a2135c0a00e4eb4d863d5f2317c6cea015c7462547f30f8f5de74d1f9c4cd  crates/murmur-replication/vendor/zerocopy-derive/src/output_tests/expected/project_union_default_repr.expected.rs
 c86c9afe81413257620377160ed20aee929c6421506cf31163a70bbb37f1fa62  crates/murmur-replication/vendor/spin/src/once.rs
 c86ced408df3348d1b4c8bd93a2c3cc885567925f8cea3b45271f5ab5d9d7acb  crates/murmur-replication/vendor/quinn-proto/src/connection/streams/mod.rs
@@ -22105,6 +22126,7 @@ c9646a9012827db066f1cc50d25ec2a6a52f730a2a8ff5a5dce020de868ecdbb  crates/murmur-
 c96cacbe65aff4c43fc2f5be03baf2b523bda151ade1828b691de1d040d3b2e6  third-party/cr-sqlite/vendor/rustix-0.38.13/src/fs/mount.rs
 c972347a632304bfd9e9283040f7ae31dc2376d409f1d6c87a3269c5d47445cf  crates/murmur-replication/vendor/linux-raw-sys/Cargo.toml.orig
 c972e47c18db00b0787bd082c4ece90d35cbc853730722f5a895a5d493a6e300  crates/murmur-replication/vendor/tokio/src/sync/rwlock/owned_write_guard.rs
+c975d2fa11a367e56e4b799e412321969a21df10f7b329306245d3d167a06113  crates/murmur-admin/PROVENANCE.md
 c979f80761f3e683b6bac46c01fa65293147346b56be5987775fc8eec920228d  crates/murmur-replication/vendor/vcpkg/test-data/normalized/installed/vcpkg/info/boost-polygon_1.67.0_x64-windows-static.list
 c97c5752f0cf8e235e5834726968708ff1f4b3bf6bfbfcf59db0229b5889ac35  third-party/zstd/README.md
 c97ca0ff2dd795cd77e1ce8d2d1a5603ef9a15ec60c63900cb76102bb7218ce3  crates/murmur-replication/vendor/tokio/src/runtime/driver.rs
@@ -23314,6 +23336,7 @@ d463b0d653f6b365124cb06175adb5e08497cbc4e4f8ced9cc01bddfa1d811e3  third-party/cr
 d46734e88df907c0ae7afbd99c49f63267f37509f959c3f60159713c8305498b  third-party/openssl/test/drbgtest.c
 d46938fba0514adac0d9f7eb0fd04ae81b9b9b6bde732dade4be2da510d906e2  third-party/rocksdb/util/hash.cc
 d46ae7a3eaaa6476553db3164676ec71aa82bcd8a2e4cad59deb07893c79f1c8  crates/murmur-replication/vendor/thiserror-impl/src/scan_expr.rs
+d46b10f882b97896959c495bafbe9e7623cc18d8b7488074e1dcb372a1789615  third-party/rocksdb/MURMUR-C-EXT.md
 d46da9ec83284c2b7d662022c8d0cfabb7805919b5997e67173ffe69b7e704e4  third-party/rocksdb/tools/write_external_sst.sh
 d46dc40c1ccb40880bb4052aa17a458c858388da0da7cc9eb96da8aa09b5231a  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_windowsapp-api-ms-win-core-synch-ansi-l1-1-0.a
 d46ef57cb58f72ff0c949bb889e091feddaced51d1a9e27d3240e75a0b217742  third-party/openssl/include/crypto/engineerr.h
@@ -23526,6 +23549,7 @@ d6397c891daee37a83c4d8ead7413ffd6b892c22d94094aa00bc2ae6af8e7af9  third-party/op
 d639f9484434b7846f86f65a2286960e35e5b0733f1d2be01ce3b900f5607611  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/third_party/s2n-bignum/s2n-bignum-imported/x86_att/curve25519/edwards25519_decode.S
 d63b943972ad87306fec797c4194d64e1338ed3663f51946a265596873ba186d  third-party/openssl/doc/man7/RAND.pod
 d63c008544862ffac1ebaa60839b0ccc4ad5b293b3a038cdc83ac41190e98dfb  crates/murmur-replication/vendor/zerovec/src/map/serde_helpers.rs
+d63d8cc050b978f503bb19938066741f48bf2faca175d25f519311805c02ea70  crates/murmur-storage/src/vfs.rs
 d63f06538f618a240aac642446297c39304378e1cff2375c8020a70a87f57f50  crates/murmur-replication/vendor/der_derive/.cargo-checksum.json
 d6417d12091c52801e2f577b114e766f2cf2e5fc0779a27ffde1b8dd24da104b  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/crypto/obj/obj.c
 d642525bced3a8e31297606cac28a97dd3007a88980196e8912c102f36d63f97  third-party/cr-sqlite/vendor/peeking_take_while-0.1.2/.cargo-checksum.json
@@ -23751,6 +23775,7 @@ d81aa8d4571feb7d88662232611a35327d6e794762d86c88ab3bfc00fc1380b2  third-party/cr
 d81c5c1dc60979c59b7eff1b223055295343cf3845d2a0517e17035a14dd0880  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_mincore-api-ms-win-core-delayload-l1-1-0.a
 d81e32e43cd89fa301c4380edd59184672b71cfd40b153cbfd3502fb0585ae39  third-party/zstd/doc/images/dict-cr.png
 d825cd08215e04a66d6c2b0a2bf22a8fdd459c79df96d0900de1c9357f07670e  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_onecore-api-ms-win-security-base-ansi-l1-1-0.a
+d82898761c28e1be109367be8d504060c90ae42ffed3acc3d216fc8044068007  crates/murmur-admin-bin/Cargo.toml
 d828d87d26e83f393a99e2f6d6e62a48f18148dbfc8ae858ec4ef8675852e6db  third-party/openssl/doc/man3/ASN1_aux_cb.pod
 d82a8bd417fbf52a589d89a16ea2a0ac4f6ac920c3976ab1f5b6ac0c8493c4f2  crates/murmur-replication/vendor/bumpalo/src/collections/str/mod.rs
 d82c60f7fa7661d4be5ac0fbf519711281059177c71362626e28cb7419cf6e14  third-party/zstd/tests/fuzz/decompress_dstSize_tooSmall.c
@@ -24266,6 +24291,7 @@ dcfb20c70c45f5effccea72ca1cf0ec7169437b666e08d0e6d1a1c9b1246f43e  third-party/cr
 dcfd4b505c08ffe79a5757fa94e09a77b1d4de56495422f057871ba4aefbb210  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_onecoreuap-api-ms-win-core-profile-l1-1-0.a
 dcfe334d780914fc31cf7a2a8171d88719305c0c4591636a7407cef4ed7959ae  crates/murmur-replication/vendor/aws-lc-sys/src/aarch64_apple_darwin_crypto.rs
 dd016d320be3fe6ad3810c22302f8eabd755d9effc937b2193dbf222855c4b7f  crates/murmur-replication/vendor/url/tests/expected_failures.txt
+dd01b1e8ea1dbfb193e8cd6a9f3ebadf7804d176ff4845e146f8fc19304d554e  crates/Cargo.lock
 dd07ae245db6f88c8d29f1397b0df0e9c44b2422be551e16dcb01c5a895636bb  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_mincore-mpr.a
 dd0a548424e191ce36d03a6cc7b91fffe22b80fac2c7e4896b5ef6909f5ce51d  crates/murmur-replication/vendor/synstructure/Cargo.toml
 dd0b9c054e93ef80e300d76042a99c3f78c73937389513a7cab1b5dd8067b338  third-party/zstd/contrib/linux-kernel/test/macro-test.sh
@@ -25680,6 +25706,7 @@ e7171d914dbbd0d0dc717d41911e2b4409eb305bdb137ce1117c03bd694617e4  crates/murmur-
 e72109a7a2aa7885ecdadffb6f51947e43e5e29609baef7e53eb1119dbfc2447  crates/murmur-replication/vendor/base64ct/tests/standard.rs
 e7210af01805f2f390374cd5b40ee502f9dc7633d6a57d988dcb17dfd93864cb  third-party/cr-sqlite/vendor/regex-automata-0.3.8/src/dfa/mod.rs
 e721b5f6b4a14311c2989b3061daa6ac4846ef52f20ea0aa8c1cea8d452e9af1  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_onecoreuap-hid.a
+e72255a7d8197a738745ae9bfd09a09d2443ecefbce5c483d29198340e178243  crates/murmur-storage/src/backup.rs
 e723ddffe5e938891f8c68d219ac38230c10604d449f1136a8e54f7ec341ade6  crates/murmur-replication/vendor/aws-lc-rs/src/pqdsa.rs
 e724d667d7224d372242b95513ae2caea42c702d22e7c3ec5bb68583137dad1c  third-party/cr-sqlite/vendor/windows_x86_64_msvc-0.48.5/.cargo-checksum.json
 e725dc6a2ef1d60d775efa4d343293909aa5517750cca04164bcb61d46e5916f  third-party/cr-sqlite/vendor/winapi-i686-pc-windows-gnu-0.4.0/lib/libwinapi_onecoreuap-api-ms-win-core-synch-l1-2-0.a
@@ -26151,6 +26178,7 @@ eb0675f25ba01f73072d2b70907fb8abb1148facefe5a20756c49250f3d65fae  third-party/cr
 eb07cf5427e6ddbcf61f4cc64c2d74ff41b5ef75ef857959651b20196f3cd157  third-party/cr-sqlite/vendor/regex-1.9.5/testdata/multiline.toml
 eb082eaf4802c715ec0476df54596b120c858287ef565f091adb63e3db1f6f17  crates/murmur-replication/vendor/web-sys/src/features/gen_GamepadHand.rs
 eb08f3d0a54e2fad43d03dc570ee4db422302874f4e3e09c91d00d652b0d6a63  crates/murmur-replication/vendor/litemap/src/store/vec_impl.rs
+eb0a9b0b9f4e5168c62478134d220b5098783c04891fc7cf1bac88ea698b9b90  crates/murmur-storage/src/lib.rs
 eb0be9b2a840b83779427fca04b94e39070b84b8be6cfe30ad96cd5b7cca4580  crates/murmur-replication/vendor/windows-sys-0.52.0/src/Windows/Win32/NetworkManagement/IpHelper/mod.rs
 eb0f749510adb6ecaadb1a26722dd6ee60c65b2c406c3aaa29175bb2057c6c31  crates/murmur-replication/vendor/aws-lc-sys/aws-lc/crypto/test/file_test.h
 eb13bcdafeeed183ce12caf1857c4665ce33bc7cb987c5a6a5db5030d3f20cfb  crates/murmur-replication/vendor/web-sys/src/features/gen_PerformanceEntryEventInit.rs
@@ -26883,6 +26911,7 @@ f17dd48c11c2037fbbce554433f7484ef1f47dee3341041b2a0a55eab37e251d  crates/murmur-
 f17e8c58b9467d609c26547be22c908b01383af26342b37ac796cb5c87e91a9a  crates/murmur-replication/vendor/web-sys/src/features/gen_PeriodicWaveOptions.rs
 f1815af1a3878fe4ef29e9faa11662adc1695d2f20fd1fc4440ac30a3634a519  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_windowsapp-api-ms-win-eventing-provider-l1-1-0.a
 f182529b336830ac29dbd6b6ca4b9dfdbd03edd8d2741883ba8fdf31b6c55368  crates/murmur-replication/vendor/linux-raw-sys/src/s390x/loop_device.rs
+f1843cb2d13e39006d626806359da59b8edd369627b35ffee37144db955fcffa  crates/murmur-admin/src/lib.rs
 f185cb1322492dbcb4c2e4dd179bd3c09958fd39287dad4308e2fbd3c569f669  third-party/openssl/apps/demoSRP/srp_verifier.txt.attr
 f185cb1322492dbcb4c2e4dd179bd3c09958fd39287dad4308e2fbd3c569f669  third-party/openssl/test/ocsp-tests/index.txt.attr
 f1867da996ada112a87e1cb12c8416fbca15bfa49c4fea9e10dcf9ac7ba14a2a  crates/murmur-replication/vendor/web-sys/src/features/gen_OpenFilePickerOptions.rs

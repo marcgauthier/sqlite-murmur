@@ -1,20 +1,23 @@
-// WP-D slice D1 tests: online hot backup helper. Standalone-capable: this
-// file plus src/sqlite_murmur_backup.cpp compile against the built static
-// dependencies (rocksdb, sqlite headers) without any shared-file change.
-// The FCTL-dispatch / murmur_backup() UDF path is lead-merged; these tests
-// cover the helper contract directly (checkpoint + manifest + cleanup).
-// Lead merge: add_executable + PRIVATE sqlite_murmur link + add_test
-// (errors_test trio precedent) once the dispatch lands.
+// WP-D slice D1 tests: online hot backup helper. These tests cover the
+// helper contract directly (checkpoint + manifest + cleanup) through its
+// stable C ABI (include/sqlite_murmur_backup.h, implemented in
+// crates/murmur-storage/src/backup.rs). The checkpoint/compact callbacks
+// adapt a C++ rocksdb::DB* handle (the tests link RocksDB); the in-tree
+// store passes its C-API handle instead. The FCTL-dispatch /
+// murmur_backup() UDF path is lead-merged.
 
 #include "sqlite_murmur_backup.h"
 
 #include <rocksdb/db.h>
+#include <rocksdb/utilities/checkpoint.h>
 
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -26,6 +29,38 @@ namespace fs = std::filesystem;
 
 void require(bool ok, const std::string &msg) {
     if (!ok) throw std::runtime_error("backup test: " + msg);
+}
+
+extern "C" int backup_checkpoint_create(void *ctx, const char *dest,
+                                        std::uint64_t *seq) {
+    rocksdb::DB *db = static_cast<rocksdb::DB *>(ctx);
+    rocksdb::Checkpoint *raw = nullptr;
+    if (!rocksdb::Checkpoint::Create(db, &raw).ok() || !raw)
+        return SQLITE_IOERR_WRITE;
+    std::unique_ptr<rocksdb::Checkpoint> checkpoint(raw);
+    if (!checkpoint->CreateCheckpoint(dest, 0, seq).ok())
+        return SQLITE_IOERR_WRITE;
+    return SQLITE_OK;
+}
+
+extern "C" int backup_compact_full_range(void *ctx) {
+    rocksdb::DB *db = static_cast<rocksdb::DB *>(ctx);
+    rocksdb::CompactRangeOptions options;
+    if (!db->CompactRange(options, nullptr, nullptr).ok())
+        return SQLITE_IOERR_WRITE;
+    return SQLITE_OK;
+}
+
+int run_backup(void *db, const char *cipher,
+               const sqlite_murmur_backup_args *args, std::uint64_t *seq) {
+    if (!args) return SQLITE_MISUSE;
+    return sqlite_murmur_backup_rs_run(args->dest, cipher, args->group,
+                                       args->node, seq, db,
+                                       backup_checkpoint_create);
+}
+
+int run_compact(void *db) {
+    return sqlite_murmur_backup_rs_compact(db, backup_compact_full_range);
 }
 
 // Minimal top-level "key": extractor for the flat manifest object.
@@ -82,26 +117,27 @@ int main() {
             sqlite_murmur_backup_args args{};
             const std::string dest = (root / "nope").string();
             fill_args(args, dest);
-            require(sqlite_murmur_backup_run(nullptr, "aes256gcm", &args, nullptr) ==
+            require(run_backup(nullptr, "aes256gcm", &args, nullptr) ==
                         SQLITE_MISUSE,
-                    "null db accepted");
-            rocksdb::DB *null_db = nullptr;
-            require(sqlite_murmur_backup_run(null_db, "aes256gcm", &args, nullptr) ==
+                    "null ctx accepted");
+            require(run_backup(nullptr, "aes256gcm", nullptr, nullptr) ==
                         SQLITE_MISUSE,
-                    "null db accepted (typed)");
+                    "null args accepted");
+            require(sqlite_murmur_backup_rs_compact(nullptr, nullptr) ==
+                        SQLITE_MISUSE,
+                    "null compact ctx/callback accepted");
             // A dummy non-null handle is never dereferenced on the
             // validation path: empty dest / cipher / bad charset fail first.
-            rocksdb::DB *dummy = reinterpret_cast<rocksdb::DB *>(0x1);
+            void *dummy = reinterpret_cast<void *>(0x1);
             sqlite_murmur_backup_args bad = args;
             bad.dest = "";
-            require(sqlite_murmur_backup_run(dummy, "aes256gcm", &bad, nullptr) ==
+            require(run_backup(dummy, "aes256gcm", &bad, nullptr) ==
                         SQLITE_MISUSE,
                     "empty dest accepted");
-            require(sqlite_murmur_backup_run(dummy, "", &args, nullptr) ==
-                        SQLITE_MISUSE,
+            require(run_backup(dummy, "", &args, nullptr) == SQLITE_MISUSE,
                     "empty cipher accepted");
-            require(sqlite_murmur_backup_run(dummy, "aes256gcm\",evil\":1,\"x\":\"",
-                                             &args, nullptr) == SQLITE_ERROR,
+            require(run_backup(dummy, "aes256gcm\",evil\":1,\"x\":\"", &args,
+                               nullptr) == SQLITE_ERROR,
                     "cipher charset injection accepted");
             require(!fs::exists(dest), "rejected call created dest");
         }
@@ -115,16 +151,16 @@ int main() {
                 out << "sentinel";
             }
             fs::create_directory(dir);
-            rocksdb::DB *dummy = reinterpret_cast<rocksdb::DB *>(0x1);
+            void *dummy = reinterpret_cast<void *>(0x1);
             sqlite_murmur_backup_args args{};
             std::string dest = file.string();
             fill_args(args, dest);
-            require(sqlite_murmur_backup_run(dummy, "aes256gcm", &args, nullptr) ==
+            require(run_backup(dummy, "aes256gcm", &args, nullptr) ==
                         SQLITE_ERROR,
                     "existing file dest accepted");
             dest = dir.string();
             fill_args(args, dest);
-            require(sqlite_murmur_backup_run(dummy, "aes256gcm", &args, nullptr) ==
+            require(run_backup(dummy, "aes256gcm", &args, nullptr) ==
                         SQLITE_ERROR,
                     "existing dir dest accepted");
             require(read_all(file) == "sentinel", "existing file clobbered");
@@ -146,7 +182,7 @@ int main() {
             sqlite_murmur_backup_args args{};
             fill_args(args, dest);
             std::uint64_t seq = 0;
-            require(sqlite_murmur_backup_run(db, "aes256gcm", &args, &seq) == SQLITE_OK,
+            require(run_backup(db, "aes256gcm", &args, &seq) == SQLITE_OK,
                     "backup run failed");
             require(seq > 0, "checkpoint seq not reported");
             delete db;
@@ -186,8 +222,8 @@ int main() {
 
         // 4b. D3b: forced full-range compaction merges SSTs.
         {
-            require(sqlite_murmur_compact_run(nullptr) == SQLITE_MISUSE,
-                    "null db compact accepted");
+            require(run_compact(nullptr) == SQLITE_MISUSE,
+                    "null ctx compact accepted");
             const std::string dir = (root / "compactdb").string();
             rocksdb::Options options;
             options.create_if_missing = true;
@@ -210,8 +246,7 @@ int main() {
             require(db->GetProperty("rocksdb.num-files-at-level0", &before),
                     "cannot count L0 files");
             require(before == "2", "expected 2 L0 files, got " + before);
-            require(sqlite_murmur_compact_run(db) == SQLITE_OK,
-                    "compact run failed");
+            require(run_compact(db) == SQLITE_OK, "compact run failed");
             std::string after;
             require(db->GetProperty("rocksdb.num-files-at-level0", &after),
                     "cannot recount L0 files");
@@ -234,7 +269,7 @@ int main() {
             require(rocksdb::DB::Open(options, src, &db).ok(), "cannot open srcdb2");
             sqlite_murmur_backup_args args{};
             fill_args(args, dest);
-            require(sqlite_murmur_backup_run(db, "aes256gcm", &args, nullptr) !=
+            require(run_backup(db, "aes256gcm", &args, nullptr) !=
                         SQLITE_OK,
                     "impossible dest accepted");
             delete db;
