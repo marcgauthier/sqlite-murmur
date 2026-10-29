@@ -129,7 +129,7 @@ int main(int argc, char **argv) {
         sqlite_murmur_config config{key, 100, 16384, 1};
         check(sqlite_murmur_register(&config), nullptr, "register");
         {
-            auto a = open(aPath, 1024), b = open(bPath, 1024), c = open(cPath, 1024);
+            auto a = open(aPath, 1024, true), b = open(bPath, 1024, true), c = open(cPath, 1024, true);
             for (auto *db : {&a, &b, &c}) {
                 exec(db->get(), "PRAGMA cipher='aes256gcm'; PRAGMA compression='zstd3'; PRAGMA journal_mode=DELETE");
                 enableReplication(*db, true);
@@ -156,7 +156,7 @@ int main(int argc, char **argv) {
             if (scalar(c.get(), "SELECT count(*) FROM records WHERE id=1 AND body='updated'") != 1 ||
                 scalar(c.get(), "SELECT count(*) FROM records") != 1)
                 throw std::runtime_error("bulk ingestion did not converge or replay idempotently");
-            auto peer = open(aPath, 1024); enableReplication(peer, true);
+            auto peer = open(aPath, 1024, true); enableReplication(peer, true);
             const auto versionBefore = scalar(peer.get(), "SELECT crsql_db_version()");
             exec(a.get(), "BEGIN IMMEDIATE; INSERT INTO records VALUES(3,'rolled back'); UPDATE records SET body='rolled back' WHERE id=1; ROLLBACK");
             if (scalar(a.get(), "SELECT count(*) FROM records WHERE body='rolled back'") != 0 ||
@@ -176,9 +176,9 @@ int main(int argc, char **argv) {
                     throw std::runtime_error("post-rollback/repeated-update tracking failed");
         }
         {
-            auto c = open(cPath, 1024); enableReplication(c, true);
+            auto c = open(cPath, 1024, true); enableReplication(c, true);
             if (scalar(c.get(), "SELECT count(*) FROM records WHERE id=3 AND body='same final value'") != 1) throw std::runtime_error("blob state did not persist");
-            auto b = open(bPath, 1024); enableReplication(b, true);
+            auto b = open(bPath, 1024, true); enableReplication(b, true);
             if (scalar(b.get(), "SELECT count(*) FROM records WHERE id=1 AND body='updated'") != 1 ||
                 scalar(b.get(), "SELECT count(*) FROM records WHERE id=3 AND body='same final value'") != 1 ||
                 scalar(b.get(), "SELECT crsql_db_version()") <= 0)

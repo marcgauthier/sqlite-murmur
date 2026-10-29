@@ -36,6 +36,9 @@ def main():
             print(f"Unknown group {target_group}. Available: {list(GROUPS.keys())}")
             sys.exit(1)
         mod = importlib.import_module(GROUPS[target_group])
+        # Group mains read sys.argv[1] as an optional scenario number, so
+        # strip the group argument (mesh_runner.py <group> [scenario]).
+        sys.argv = [GROUPS[target_group]] + sys.argv[2:]
         mod.main()
     else:
         print("=" * 60)

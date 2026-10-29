@@ -11,7 +11,6 @@
 
 pub mod compare;
 pub mod digest;
-pub mod logical;
 pub mod managed;
 pub mod merge;
 pub mod meta;

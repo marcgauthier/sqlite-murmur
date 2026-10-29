@@ -23,3 +23,5 @@ rusqlite = { version = "=0.40.2", default-features = false }
 
 [dev-dependencies]
 rand = "=0.8.8"
+
+[workspace]
