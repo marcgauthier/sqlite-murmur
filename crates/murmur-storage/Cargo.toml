@@ -12,9 +12,6 @@ default = []
 aegis256 = []
 
 [dependencies]
-aes-gcm = "=0.10.3"
-hkdf = "=0.12.4"
-sha2 = "=0.10.9"
-rand = "=0.8.8"
+aws-lc-rs = "=1.18.2"
 zeroize = "=1.9.1"
 libc = "=0.2.191"

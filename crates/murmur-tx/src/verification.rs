@@ -1,6 +1,6 @@
 //! Disposable authentication results, independent of durable staging and progress.
 use crate::{Error, NodeId, Result, encode, protocol::Transaction};
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::Sha256;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 const CAPACITY: usize = 8192;

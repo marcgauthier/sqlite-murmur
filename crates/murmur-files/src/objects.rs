@@ -20,7 +20,7 @@ use crate::crypto::{ByteSource, OpenReader, SealWriter};
 use crate::store::{ChunkStore, ObjectId, SLICE_BYTES};
 use murmur_tx::files::{Availability, KeyRotationStatus, Metadata};
 use murmur_tx::{Backend, Error, NodeId, Record, Result, decode, encode, hex};
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::Sha256;
 use std::cell::Cell;
 use std::collections::BTreeSet;
 use std::io::{Read, Write};
@@ -694,7 +694,7 @@ impl<S: ChunkStore> SqliteObjects<S> {
             {
                 continue;
             }
-            let transfer = format!(".rotate-{}", hex(&rand::random::<NodeId>())).into_bytes();
+            let transfer = format!(".rotate-{}", hex(&crate::randomness::bytes::<16>())).into_bytes();
             let _active = self.guard_entries(vec![ActiveEntry::Staged(transfer.clone())]);
             let result = (|| -> Result<Metadata> {
                 let store = &self.store;
@@ -837,7 +837,7 @@ impl<'s, S: ChunkStore> Upload<'s, S> {
     fn new(objects: &'s SqliteObjects<S>, name: &str) -> Result<Self> {
         check_name(name)?;
         let reservation = objects.reserve_staging(128)?;
-        let transfer = format!(".upload-{}", hex(&rand::random::<NodeId>())).into_bytes();
+        let transfer = format!(".upload-{}", hex(&crate::randomness::bytes::<16>())).into_bytes();
         let guard = objects.guard_entries(vec![ActiveEntry::Staged(transfer.clone())]);
         let store = &objects.store;
         let staged = transfer.clone();

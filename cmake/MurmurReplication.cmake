@@ -12,10 +12,13 @@ file(MAKE_DIRECTORY "${murmur_build}/cargo-home")
 file(WRITE "${murmur_build}/cargo-home/config.toml"
   "[source.crates-io]\nreplace-with = 'vendored-sources'\n[source.vendored-sources]\ndirectory = '${murmur_root}/vendor'\n[net]\noffline = true\n")
 file(GLOB_RECURSE murmur_sources CONFIGURE_DEPENDS "${murmur_root}/src/*.rs")
+file(GLOB_RECURSE murmur_common_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/crates/common/*.rs" "${PROJECT_SOURCE_DIR}/crates/common/fixtures/*")
+list(APPEND murmur_sources ${murmur_common_sources})
 set(murmur_tx_root "${PROJECT_SOURCE_DIR}/crates/murmur-tx")
 file(GLOB_RECURSE murmur_tx_sources CONFIGURE_DEPENDS "${murmur_tx_root}/src/*.rs")
 list(APPEND murmur_sources ${murmur_tx_sources} "${murmur_tx_root}/Cargo.toml")
-foreach(murmur_peer murmur-query murmur-sched)
+list(APPEND murmur_sources "${murmur_tx_root}/build.rs")
+foreach(murmur_peer murmur-query murmur-sched murmur-files murmur-policy murmur-ipnet)
   file(GLOB_RECURSE murmur_peer_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/crates/${murmur_peer}/src/*.rs")
   list(APPEND murmur_sources ${murmur_peer_sources} "${PROJECT_SOURCE_DIR}/crates/${murmur_peer}/Cargo.toml")
 endforeach()
@@ -36,11 +39,13 @@ foreach(flavor IN LISTS murmur_flavors)
   endif()
   add_custom_command(OUTPUT "${output}"
     COMMAND ${CMAKE_COMMAND} -E env "CARGO_HOME=${murmur_build}/cargo-home"
+      "MURMUR_BUILD_DIR=${PROJECT_BINARY_DIR}"
       "CARGO_TARGET_DIR=${murmur_build}/${flavor}"
       ${MURMUR_RUSTUP} run ${MURMUR_TOOLCHAIN} cargo rustc --lib --release --frozen --manifest-path "${murmur_root}/Cargo.toml" ${features}
-    DEPENDS ${murmur_sources} "${murmur_root}/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.lock"
+    DEPENDS ${murmur_sources} "$<TARGET_FILE:libzstd_static>" "${murmur_root}/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.lock"
     WORKING_DIRECTORY "${murmur_build}" VERBATIM)
   add_custom_target(murmur_${flavor}_build ALL DEPENDS "${output}")
+  add_dependencies(murmur_${flavor}_build libzstd_static)
   if(flavor STREQUAL "static")
     add_library(murmur_rust STATIC IMPORTED GLOBAL)
     set_target_properties(murmur_rust PROPERTIES IMPORTED_LOCATION "${archive}")
@@ -100,6 +105,8 @@ if(SQLITE_MURMUR_BUILD_TESTS)
   set_tests_properties(sqlite_murmur_query_subscribe PROPERTIES TIMEOUT 120)
   if(SQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS)
   add_executable(sqlite_murmur_murmur_loadable_test tests/murmur_replication.cpp)
+  # The extension resolves the host's SQLite and file-key C APIs at dlopen.
+  set_target_properties(sqlite_murmur_murmur_loadable_test PROPERTIES ENABLE_EXPORTS ON)
   target_compile_definitions(sqlite_murmur_murmur_loadable_test PRIVATE MURMUR_TEST_LOADABLE=1)
   target_link_libraries(sqlite_murmur_murmur_loadable_test PRIVATE sqlite_murmur)
   add_dependencies(sqlite_murmur_murmur_loadable_test murmur_loadable_build murmur_crsqlite)

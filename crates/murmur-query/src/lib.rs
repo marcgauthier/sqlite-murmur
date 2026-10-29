@@ -5,6 +5,11 @@
 //! ported from MURMUR-RUST `src/` with sqlite-murmur seams isolated in
 //! [`adapt`]. See `PROVENANCE.md` for sources and deviations.
 
+#[path = "../../common/sha256.rs"]
+mod crypto_provider;
+#[path = "../../common/uuid.rs"]
+mod uuid_provider;
+
 pub mod adapt;
 pub mod crdt_compat;
 pub mod primary_key;

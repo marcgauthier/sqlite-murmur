@@ -1,7 +1,7 @@
 //! One-way logical bridge: independent domains and authenticated sealed artifacts.
 use crate::*;
 use chacha20poly1305::{XChaCha20Poly1305,KeyInit,aead::{Aead,Payload}};
-use sha2::{Sha256,Digest};
+use crate::crypto_provider::Sha256;
 use std::{path::{Path,PathBuf},fs,io::{Read,Write,Seek}};
 pub use crate::ftp::FtpOptions;
 const FILE_MAGIC:&[u8]=b"MURMUR-BRIDGE-FILE-1\0";
@@ -25,8 +25,8 @@ impl Bridge {
     pub fn open(config:Config,backend:Arc<dyn Backend>)->Result<Self>{config.validate()?;if config.domain!=backend.identity().0{return Err(Error::Invalid("bridge domain mismatch".into()));}fs::create_dir_all(&config.directory)?;Ok(Self{config,backend,gate:std::sync::Mutex::new(()),files:std::sync::Mutex::new(None)})}
     pub fn attach_files(&self,files:Option<Arc<crate::files::Objects>>){*self.files.lock().unwrap()=files;}
     pub fn export(&self,payload:&[u8])->Result<PathBuf>{self.export_origin(payload,None)}
-    fn export_origin(&self,payload:&[u8],origin:Option<Origin>)->Result<PathBuf>{if self.config.role!=Role::LowExporter{return Err(Error::Invalid("bridge direction".into()));}if payload.len()>self.config.max_payload_bytes{return Err(Error::Overloaded);}let(db,node)=self.backend.identity();let sequence_key=format!("09/bridge/export/{}/sequence",self.config.stream).into_bytes();let sequence=self.backend.get(&sequence_key)?.map(|b|decode::<u64>(&b)).transpose()?.unwrap_or(0).checked_add(1).ok_or(Error::Overloaded)?;let ephemeral=zeroize::Zeroizing::new(rand::random::<[u8;32]>());let ephemeral_public=crate::crypto::recipient_public(&ephemeral);let secret=crate::crypto::agree(&ephemeral,&self.config.recipient)?;let header=Header{origin,source_database:db,source_node:node,stream:self.config.stream.clone(),sequence,bundle:rand::random(),recipient:self.config.recipient,ephemeral:ephemeral_public,nonce:rand::random(),digest:Sha256::digest(payload).into()};let aad=encode(&header)?;let key=derive(&secret,&aad)?;let compressed=zstd::stream::encode_all(payload,3)?;let cipher=XChaCha20Poly1305::new_from_slice(&*key).unwrap();let ciphertext=cipher.encrypt((&header.nonce).into(),Payload{msg:&compressed,aad:&aad}).map_err(|_|Error::Auth("bridge encryption".into()))?;let mut bundle=Bundle{version:1,header,ciphertext,signature:Vec::new()};bundle.signature=crate::crypto::sign(self.config.signer.as_deref().unwrap(), &signed(&bundle)?)?;let bytes=encode(&bundle)?;if bytes.len()>self.config.max_bundle_bytes{return Err(Error::Overloaded);}let path=self.config.directory.join(format!("{}-{sequence:020}.bundle",hex(&node)));let pending=self.config.directory.join(format!(".{}.pending",hex(&bundle.header.bundle)));let mut file=crate::files::private_file(&pending)?;file.write_all(&bytes)?;file.sync_all()?;self.backend.commit(vec![Record::put(format!("09/bridge/outbox/{}",hex(&bundle.header.bundle)).into_bytes(),bytes),Record::put(sequence_key,encode(&sequence)?)])?;fs::rename(pending,&path)?;crate::files::sync_directory(&self.config.directory)?;Ok(path)}
-    pub fn open_bundle(&self,bytes:&[u8])->Result<(Header,Vec<u8>)>{if self.config.role!=Role::HighReceiver || bytes.len()>self.config.max_bundle_bytes{return Err(Error::Invalid("bridge role or artifact size".into()));}let bundle:Bundle=decode(bytes)?;if bundle.version!=1 || !self.config.trusted_domains.contains(&bundle.header.source_database) || bundle.header.sequence==0 || bundle.header.stream!=self.config.stream{return Err(Error::Protocol("bridge envelope".into()));}let public=self.config.trusted_signers.get(&bundle.header.source_node).ok_or_else(||Error::Auth("untrusted bridge signer".into()))?;crate::crypto::verify(public,&signed(&bundle)?,&bundle.signature)?;let secret=self.config.receiver_secret.as_deref().unwrap();if crate::crypto::recipient_public(secret)!=bundle.header.recipient{return Err(Error::Auth("bridge recipient mismatch".into()));}let shared=crate::crypto::agree(secret,&bundle.header.ephemeral)?;let aad=encode(&bundle.header)?;let key=derive(&shared,&aad)?;let compressed=XChaCha20Poly1305::new_from_slice(&*key).unwrap().decrypt((&bundle.header.nonce).into(),Payload{msg:&bundle.ciphertext,aad:&aad}).map_err(|_|Error::Auth("bridge authentication".into()))?;let decoder=zstd::stream::read::Decoder::new(compressed.as_slice())?;let mut payload=Vec::new();decoder.take(self.config.max_payload_bytes as u64+1).read_to_end(&mut payload)?;if payload.len()>self.config.max_payload_bytes || <[u8;32]>::from(Sha256::digest(&payload))!=bundle.header.digest{return Err(Error::Auth("bridge payload digest or size".into()));}Ok((bundle.header,payload))}
+    fn export_origin(&self,payload:&[u8],origin:Option<Origin>)->Result<PathBuf>{if self.config.role!=Role::LowExporter{return Err(Error::Invalid("bridge direction".into()));}if payload.len()>self.config.max_payload_bytes{return Err(Error::Overloaded);}let(db,node)=self.backend.identity();let sequence_key=format!("09/bridge/export/{}/sequence",self.config.stream).into_bytes();let sequence=self.backend.get(&sequence_key)?.map(|b|decode::<u64>(&b)).transpose()?.unwrap_or(0).checked_add(1).ok_or(Error::Overloaded)?;let ephemeral=zeroize::Zeroizing::new(crate::randomness::bytes::<32>());let ephemeral_public=crate::crypto::recipient_public(&ephemeral);let secret=crate::crypto::agree(&ephemeral,&self.config.recipient)?;let header=Header{origin,source_database:db,source_node:node,stream:self.config.stream.clone(),sequence,bundle:crate::randomness::bytes(),recipient:self.config.recipient,ephemeral:ephemeral_public,nonce:crate::randomness::bytes(),digest:Sha256::digest(payload).into()};let aad=encode(&header)?;let key=derive(&secret,&aad)?;let compressed=crate::compression::compress(payload,3)?;let cipher=XChaCha20Poly1305::new_from_slice(&*key).unwrap();let ciphertext=cipher.encrypt((&header.nonce).into(),Payload{msg:&compressed,aad:&aad}).map_err(|_|Error::Auth("bridge encryption".into()))?;let mut bundle=Bundle{version:1,header,ciphertext,signature:Vec::new()};bundle.signature=crate::crypto::sign(self.config.signer.as_deref().unwrap(), &signed(&bundle)?)?;let bytes=encode(&bundle)?;if bytes.len()>self.config.max_bundle_bytes{return Err(Error::Overloaded);}let path=self.config.directory.join(format!("{}-{sequence:020}.bundle",hex(&node)));let pending=self.config.directory.join(format!(".{}.pending",hex(&bundle.header.bundle)));let mut file=crate::files::private_file(&pending)?;file.write_all(&bytes)?;file.sync_all()?;self.backend.commit(vec![Record::put(format!("09/bridge/outbox/{}",hex(&bundle.header.bundle)).into_bytes(),bytes),Record::put(sequence_key,encode(&sequence)?)])?;fs::rename(pending,&path)?;crate::files::sync_directory(&self.config.directory)?;Ok(path)}
+    pub fn open_bundle(&self,bytes:&[u8])->Result<(Header,Vec<u8>)>{if self.config.role!=Role::HighReceiver || bytes.len()>self.config.max_bundle_bytes{return Err(Error::Invalid("bridge role or artifact size".into()));}let bundle:Bundle=decode(bytes)?;if bundle.version!=1 || !self.config.trusted_domains.contains(&bundle.header.source_database) || bundle.header.sequence==0 || bundle.header.stream!=self.config.stream{return Err(Error::Protocol("bridge envelope".into()));}let public=self.config.trusted_signers.get(&bundle.header.source_node).ok_or_else(||Error::Auth("untrusted bridge signer".into()))?;crate::crypto::verify(public,&signed(&bundle)?,&bundle.signature)?;let secret=self.config.receiver_secret.as_deref().unwrap();if crate::crypto::recipient_public(secret)!=bundle.header.recipient{return Err(Error::Auth("bridge recipient mismatch".into()));}let shared=crate::crypto::agree(secret,&bundle.header.ephemeral)?;let aad=encode(&bundle.header)?;let key=derive(&shared,&aad)?;let compressed=XChaCha20Poly1305::new_from_slice(&*key).unwrap().decrypt((&bundle.header.nonce).into(),Payload{msg:&bundle.ciphertext,aad:&aad}).map_err(|_|Error::Auth("bridge authentication".into()))?;let payload=crate::compression::decompress_to_limit(&compressed,self.config.max_payload_bytes.saturating_add(1))?;if payload.len()>self.config.max_payload_bytes || <[u8;32]>::from(Sha256::digest(&payload))!=bundle.header.digest{return Err(Error::Auth("bridge payload digest or size".into()));}Ok((bundle.header,payload))}
     /// Authenticate before staging; preserve gaps and identity conflicts across restart.
     pub fn stage(&self,path:&Path)->Result<Header>{if fs::metadata(path)?.len()>self.config.max_bundle_bytes as u64{return Err(Error::Overloaded);}let bytes=fs::read(path)?;let(header,_)=self.open_bundle(&bytes)?;let key=format!("09/bridge/inbox/{}/{}/{:020}",hex(&header.source_database),header.stream,header.sequence).into_bytes();if let Some(old)=self.backend.get(&key)?{let(previous,_)=self.open_bundle(&old)?;if previous.bundle!=header.bundle || previous.digest!=header.digest{return Err(Error::Auth("conflicting bridge sequence".into()));}}else{let keys=self.backend.keys(b"09/bridge/inbox/")?;let mut total=bytes.len();for k in keys {total+=self.backend.get(&k)?.map_or(0,|b|b.len());if total>self.config.staging_bytes{return Err(Error::Overloaded);}}self.backend.commit(vec![Record::put(key,bytes)])?;}Ok(header)}
     pub fn release(&self,table:impl Into<String>,key:Vec<u8>,column:Option<String>)->Result<bool>{if self.config.role!=Role::HighReceiver{return Err(Error::Invalid("bridge direction".into()));}self.backend.release_ownership(table.into(),key,column)}
@@ -70,14 +70,123 @@ impl Bridge {
         }Ok(count)
     }
     fn process_file_part(&self,header:&Header,payload:&[u8])->Result<Option<PathBuf>>{let objects=self.files.lock().unwrap().clone().ok_or_else(||Error::Invalid("bridge file storage is not configured".into()))?;let part:FilePart=decode(&payload[FILE_MAGIC.len()..])?;if part.name.is_empty()||part.name.len()>4096||part.name.contains('\0')||part.bytes>self.config.staging_bytes as u64||part.offset>part.bytes||part.offset.checked_add(part.data.len() as u64).is_none_or(|end|end>part.bytes)||part.final_part&&(part.offset!=part.bytes||!part.data.is_empty()){return Err(Error::Protocol("bridge file chunk bounds".into()));}let transfer=hex(&Sha256::digest(encode(&(header.source_database,&header.stream,&part.name,part.digest))?));let path=self.config.directory.join(format!(".file-{transfer}.part"));let received_key=format!("09/bridge/file-received/{transfer}").into_bytes();if part.final_part&&!path.exists()&&self.backend.get(&received_key)?.is_some(){return Ok(None);}if !path.exists(){let _=crate::files::private_file(&path)?;}let mut file=fs::OpenOptions::new().read(true).write(true).open(&path)?;let length=file.metadata()?.len();let mut staged=0u64;for entry in fs::read_dir(&self.config.directory)?{let entry=entry?;if entry.file_name().to_string_lossy().starts_with(".file-"){staged=staged.saturating_add(entry.metadata()?.len());}}let additional=if length==part.offset{part.data.len() as u64}else{0};if staged.saturating_add(additional)>self.config.staging_bytes as u64{return Err(Error::Overloaded);}if length==part.offset{file.seek(std::io::SeekFrom::Start(part.offset))?;file.write_all(&part.data)?;file.sync_all()?;}else if length>=part.offset+part.data.len() as u64{file.seek(std::io::SeekFrom::Start(part.offset))?;let mut old=vec![0;part.data.len()];file.read_exact(&mut old)?;if old!=part.data{return Err(Error::Auth("conflicting bridge file chunk".into()));}}else{return Err(Error::Protocol("bridge file chunk offset".into()));}if !part.final_part{return Ok(None);}if file.metadata()?.len()!=part.bytes{return Err(Error::Unavailable("incomplete bridge file".into()));}file.seek(std::io::SeekFrom::Start(0))?;let mut hash=Sha256::new();let mut buffer=[0;64<<10];loop{let n=file.read(&mut buffer)?;if n==0{break;}hash.update(&buffer[..n]);}if <[u8;32]>::from(hash.finalize())!=part.digest{return Err(Error::Auth("bridge file digest".into()));}drop(file);let uploaded=objects.upload(&part.name,fs::File::open(&path)?)?;if uploaded.digest!=part.digest||uploaded.bytes!=part.bytes{return Err(Error::Auth("bridge file content mismatch".into()));}self.backend.commit(vec![Record::put(received_key,encode(&(part.digest,part.bytes))?)])?;Ok(Some(path))}
-    pub async fn publish_http(&self,path:&Path,url:&str)->Result<()>{if self.config.role!=Role::LowExporter || !(url.starts_with("https://") || url.starts_with("http://")){return Err(Error::Invalid("bridge export URL".into()));}let data=fs::read(path)?;if data.len()>self.config.max_bundle_bytes{return Err(Error::Overloaded);}reqwest::Client::new().put(url).body(data).send().await.map_err(|e|Error::Unavailable(e.to_string()))?.error_for_status().map_err(|e|Error::Unavailable(e.to_string()))?;Ok(())}
+    pub async fn publish_http(&self,path:&Path,url:&str)->Result<()>{if self.config.role!=Role::LowExporter || !(url.starts_with("https://") || url.starts_with("http://")){return Err(Error::Invalid("bridge export URL".into()));}let data=fs::read(path)?;if data.len()>self.config.max_bundle_bytes{return Err(Error::Overloaded);}http_client().build().map_err(|e|Error::Unavailable(e.to_string()))?.put(url).body(data).send().await.map_err(|e|Error::Unavailable(e.to_string()))?.error_for_status().map_err(|e|Error::Unavailable(e.to_string()))?;Ok(())}
     pub async fn publish_ftp(&self,path:&Path,url:&str,tls:Option<&FtpOptions>)->Result<()>{if self.config.role!=Role::LowExporter || !(url.starts_with("ftp://") || url.starts_with("ftps://")){return Err(Error::Invalid("bridge export URL".into()));}let name=path.file_name().and_then(|n|n.to_str()).ok_or_else(||Error::Invalid("bridge artifact name".into()))?.to_string();let url=url.to_string();let tls=tls.cloned();let limit=self.config.max_bundle_bytes;let path=path.to_path_buf();tokio::task::spawn_blocking(move||{let data=fs::read(&path)?;if data.is_empty(){return Err(Error::Invalid("bridge artifact has no payload".into()));}if data.len()>limit{return Err(Error::Overloaded);}crate::ftp::upload(&url,&name,&data,tls.as_ref())}).await.map_err(|e|Error::Unavailable(format!("ftp task: {e}")))?}
 }
 fn signed(bundle:&Bundle)->Result<Vec<u8>>{let mut bytes=b"murmur/sqlite-bridge/v1".to_vec();bytes.extend(encode(&(bundle.version,&bundle.header,Sha256::digest(&bundle.ciphertext).to_vec()))?);Ok(bytes)}
-fn derive(secret:&[u8;32],aad:&[u8])->Result<zeroize::Zeroizing<[u8;32]>>{let hk=hkdf::Hkdf::<Sha256>::new(Some(b"murmur/sqlite-bridge/v1"),secret);let mut key=zeroize::Zeroizing::new([0;32]);hk.expand(aad,&mut *key).map_err(|_|Error::Auth("bridge key derivation".into()))?;Ok(key)}
+fn derive(secret:&[u8;32],aad:&[u8])->Result<zeroize::Zeroizing<[u8;32]>>{let mut key=zeroize::Zeroizing::new([0;32]);crate::crypto_provider::hkdf_sha256(secret,b"murmur/sqlite-bridge/v1",aad,&mut *key).map_err(|_|Error::Auth("bridge key derivation".into()))?;Ok(key)}
 
 impl Config {
     pub fn exporter(domain:NodeId,directory:PathBuf,stream:String,signer:[u8;32],recipient:[u8;32])->Self {Self{domain,trusted_domains:BTreeSet::new(),trusted_origins:BTreeMap::new(),role:Role::LowExporter,directory,stream,recipient,receiver_secret:None,signer:Some(zeroize::Zeroizing::new(signer)),trusted_signers:BTreeMap::new(),max_bundle_bytes:16<<20,max_payload_bytes:64<<20,staging_bytes:1<<30}}
     pub fn receiver(domain:NodeId,directory:PathBuf,stream:String,secret:[u8;32],trusted_domains:BTreeSet<NodeId>,trusted_signers:BTreeMap<NodeId,[u8;32]>,trusted_origins:BTreeMap<NodeId,[u8;32]>)->Self {Self{domain,trusted_domains,trusted_origins,role:Role::HighReceiver,directory,stream,recipient:crate::crypto::recipient_public(&secret),receiver_secret:Some(zeroize::Zeroizing::new(secret)),signer:None,trusted_signers,max_bundle_bytes:16<<20,max_payload_bytes:64<<20,staging_bytes:1<<30}}
 }
 pub fn recipient_public(secret:[u8;32])->[u8;32] {crate::crypto::recipient_public(&secret)}
+
+
+// Reqwest's no-provider feature requires a runtime default. Respect a provider
+// already installed by the embedding application; otherwise select AWS-LC.
+fn http_client() -> reqwest::ClientBuilder {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    reqwest::Client::builder()
+}
+
+#[cfg(test)]
+mod https_tests {
+    use super::http_client;
+    use std::{io::{Read, Write}, net::TcpListener, sync::Arc, time::Duration};
+
+    #[tokio::test]
+    async fn proxy_cidr_bypass_uses_the_internal_ipnet_subset() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/", listener.local_addr().unwrap());
+        let thread = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                match listener.accept() {
+                    Ok((mut socket, _)) => {
+                        socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+                        socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+                        let mut request = Vec::new();
+                        while !request.ends_with(b"\r\n\r\n") {
+                            let mut byte = [0];
+                            socket.read_exact(&mut byte).unwrap();
+                            request.push(byte[0]);
+                            assert!(request.len() <= 8192);
+                        }
+                        assert!(request.starts_with(b"GET / HTTP/1.1\r\n"));
+                        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                        return true;
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                        if std::time::Instant::now() >= deadline { return false; }
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(e) => panic!("proxy test accept failed: {e}"),
+                }
+            }
+        });
+        // The proxy endpoint cannot serve the request: successful delivery must
+        // use hyper-util's CIDR bypass. Host bits in the CIDR remain significant
+        // for formatting, while containment uses the /8 network mask.
+        let proxy = reqwest::Proxy::all("http://127.0.0.1:0").unwrap()
+            .no_proxy(reqwest::NoProxy::from_string("127.99.88.77/8,::1/128"));
+        let result = http_client().no_proxy().proxy(proxy)
+            .timeout(Duration::from_secs(5)).build().unwrap().get(url).send().await;
+        assert!(thread.join().unwrap(), "CIDR bypass did not reach the server");
+        assert!(result.unwrap().status().is_success());
+    }
+
+    fn server() -> (String, reqwest::Certificate, std::thread::JoinHandle<bool>) {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let cert = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap()
+            .self_signed(&key).unwrap();
+        let trust = reqwest::Certificate::from_der(cert.der()).unwrap();
+        // An explicit server provider leaves HTTP client initialization under test.
+        let config = rustls::ServerConfig::builder_with_provider(Arc::new(
+            rustls::crypto::aws_lc_rs::default_provider(),
+        )).with_safe_default_protocol_versions().unwrap()
+            .with_no_client_auth()
+            .with_single_cert(vec![cert.der().clone()],
+                rustls::pki_types::PrivatePkcs8KeyDer::from(key.serialize_der()).into()).unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("https://localhost:{}/bundle", listener.local_addr().unwrap().port());
+        let thread = std::thread::spawn(move || {
+            let (socket, _) = listener.accept().unwrap();
+            socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            socket.set_write_timeout(Some(Duration::from_secs(5))).unwrap();
+            let connection = rustls::ServerConnection::new(Arc::new(config)).unwrap();
+            let mut tls = rustls::StreamOwned::new(connection, socket);
+            let mut request = Vec::new();
+            loop {
+                let mut byte = [0];
+                if tls.read_exact(&mut byte).is_err() { return false; }
+                request.push(byte[0]);
+                if request.ends_with(b"\r\n\r\n") { break; }
+                assert!(request.len() <= 8192);
+            }
+            assert!(request.starts_with(b"PUT /bundle HTTP/1.1\r\n"));
+            let mut body = [0; 3];
+            tls.read_exact(&mut body).unwrap();
+            assert_eq!(&body, b"abc");
+            tls.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+            tls.flush().unwrap();
+            true
+        });
+        (url, trust, thread)
+    }
+
+    #[tokio::test]
+    async fn no_provider_http_client_initializes_tls_and_preserves_trust_checks() {
+        let (url, trust, thread) = server();
+        let client = http_client().no_proxy().add_root_certificate(trust)
+            .timeout(Duration::from_secs(5)).build().unwrap();
+        assert!(client.put(url).body("abc").send().await.unwrap().status().is_success());
+        assert!(thread.join().unwrap());
+
+        let (url, _, thread) = server();
+        let client = http_client().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        assert!(client.put(url).body("abc").send().await.is_err());
+        assert!(!thread.join().unwrap());
+    }
+}

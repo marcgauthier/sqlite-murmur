@@ -1,6 +1,6 @@
 //! Independent QUIC endpoint; metadata is replicated by the ordinary mesh.
 use crate::{*,files::{Objects,Metadata},transport};
-use sha2::{Digest,Sha256};
+use crate::crypto_provider::Sha256;
 use std::sync::Arc;
 #[derive(Serialize,Deserialize)]
 enum Frame {Request{database:NodeId,digest:[u8;32],generation:u64,offset:u64},Header{bytes:u64,identity:[u8;32]},Chunk(Vec<u8>),Done,Missing}
@@ -265,7 +265,7 @@ mod tests {
     async fn failed_authentication_discards_poisoned_container_and_resume_identity() {
         let dir = std::env::temp_dir().join(format!(
             "murmur-poisoned-{}",
-            hex(&rand::random::<NodeId>())
+            hex(&crate::randomness::bytes::<16>())
         ));
         let objects = Objects::open(
             files::Config::new(dir.clone(), [3; 32], "127.0.0.1:0".parse().unwrap()),
@@ -295,7 +295,7 @@ mod tests {
     #[tokio::test]
     async fn partial_transfer_requires_a_complete_identity_sidecar() {
         let dir =
-            std::env::temp_dir().join(format!("murmur-fetch-{}", hex(&rand::random::<NodeId>())));
+            std::env::temp_dir().join(format!("murmur-fetch-{}", hex(&crate::randomness::bytes::<16>())));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("file.part");
         for sidecar in [None, Some(vec![1; 31]), Some(vec![1; 32])] {

@@ -18,7 +18,7 @@ but unlanded work; nothing pending is required to operate what ships.
 Rules that hold everywhere: long-lived keys never appear in SQL text
 (the register rule; the sole exception is session-scoped bridge secrets
 in action args, ruled §7a); key material is wiped after use
-(`OPENSSL_cleanse`, `Zeroizing`, `admin_wipe`); CLI/config dumps redact
+(`Zeroizing`, storage buffer cleansing, volatile admin key wipes); CLI/config dumps redact
 secret-like names (never allowlist).
 
 ## 1. Provision ceremonies

@@ -29,14 +29,21 @@ file(MAKE_DIRECTORY "${storage_build}/cargo-home")
 file(WRITE "${storage_build}/cargo-home/config.toml"
   "[source.crates-io]\nreplace-with = 'vendored-sources'\n[source.vendored-sources]\ndirectory = '${PROJECT_SOURCE_DIR}/crates/murmur-replication/vendor'\n[net]\noffline = true\n")
 file(GLOB_RECURSE storage_sources CONFIGURE_DEPENDS "${storage_root}/src/*.rs")
+file(GLOB_RECURSE murmur_common_sources CONFIGURE_DEPENDS "${PROJECT_SOURCE_DIR}/crates/common/*.rs" "${PROJECT_SOURCE_DIR}/crates/common/fixtures/*")
+list(APPEND storage_sources ${murmur_common_sources})
 set(storage_archive "${storage_build}/release/libmurmur_storage.a")
 add_custom_command(OUTPUT "${storage_archive}"
   COMMAND ${CMAKE_COMMAND} -E env "CARGO_HOME=${storage_build}/cargo-home"
+    "MURMUR_BUILD_DIR=${PROJECT_BINARY_DIR}"
     "CARGO_TARGET_DIR=${storage_build}"
     ${MURMUR_RUSTUP} run ${MURMUR_TOOLCHAIN} cargo rustc --lib --release --frozen --manifest-path "${storage_root}/Cargo.toml" --crate-type staticlib ${storage_feature_args}
-  DEPENDS ${storage_sources} "${storage_root}/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.lock"
+  DEPENDS ${storage_sources} "$<TARGET_FILE:libzstd_static>" "${storage_root}/build.rs" "${storage_root}/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.toml" "${PROJECT_SOURCE_DIR}/crates/Cargo.lock"
   WORKING_DIRECTORY "${storage_build}" VERBATIM)
 add_custom_target(murmur_storage_build ALL DEPENDS "${storage_archive}")
+add_dependencies(murmur_storage_build rocksdb libzstd_static)
+if(SQLITE_MURMUR_ENABLE_AEGIS256)
+  add_dependencies(murmur_storage_build aegis)
+endif()
 add_library(storage_rust STATIC IMPORTED GLOBAL)
 set_target_properties(storage_rust PROPERTIES IMPORTED_LOCATION "${storage_archive}")
 add_dependencies(storage_rust murmur_storage_build)

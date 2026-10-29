@@ -166,8 +166,8 @@ fn make_target(table: &str, pk_bytes: Vec<u8>, column: &str) -> Result<Target> {
 }
 
 fn digest(data: &[u8]) -> [u8; 32] {
-    use sha2::Digest;
-    sha2::Sha256::digest(data).into()
+
+    crate::crypto_provider::Sha256::digest(data).into()
 }
 
 /// One stored event with its row coordinates.

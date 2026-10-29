@@ -1,7 +1,11 @@
 /build/
+/build-a1/
 /crates/target/
 /out/
 /.cache/
+/experiments/
+__pycache__/
+*.pyc
 *.o
 *.a
 *.so
@@ -9,3 +13,4 @@
 *.dll
 *.exe
 .DS_Store
+

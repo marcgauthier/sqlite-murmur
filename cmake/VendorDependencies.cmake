@@ -1,12 +1,6 @@
 # All library sources are checked in. Configuration/build never downloads code.
-include(ExternalProject)
 find_package(Threads REQUIRED)
 find_package(Perl REQUIRED)
-find_program(SQLITE_MURMUR_MAKE NAMES gmake make REQUIRED)
-set(SQLITE_MURMUR_OPENSSL_JOBS 2 CACHE STRING "Parallel jobs for the vendored OpenSSL build")
-if(NOT SQLITE_MURMUR_OPENSSL_JOBS MATCHES "^[1-9][0-9]*$")
-  message(FATAL_ERROR "SQLITE_MURMUR_OPENSSL_JOBS must be a positive integer")
-endif()
 set(_vendor "${PROJECT_SOURCE_DIR}/third-party")
 set(_vendor_build "${PROJECT_BINARY_DIR}/third-party")
 
@@ -39,32 +33,6 @@ foreach(_option WITH_GFLAGS WITH_SNAPPY WITH_LZ4 WITH_ZLIB WITH_BZ2 WITH_ZSTD
 endforeach()
 set(PORTABLE ON CACHE BOOL "" FORCE)
 add_subdirectory("${_vendor}/rocksdb" "${_vendor_build}/rocksdb" EXCLUDE_FROM_ALL)
-
-# Use OpenSSL's own supported build, out of tree, for AES-GCM and secure RNG.
-# Imported target dependencies ensure generated headers exist before compilation.
-set(_openssl_install "${_vendor_build}/openssl-install")
-file(MAKE_DIRECTORY "${_openssl_install}/include")
-ExternalProject_Add(sqlite_murmur_openssl_build
-  SOURCE_DIR "${_vendor}/openssl"
-  BINARY_DIR "${_vendor_build}/openssl"
-  INSTALL_DIR "${_openssl_install}"
-  DOWNLOAD_COMMAND ""
-  UPDATE_COMMAND ""
-  CONFIGURE_COMMAND ${PERL_EXECUTABLE} <SOURCE_DIR>/Configure
-    "--prefix=<INSTALL_DIR>" "--libdir=lib" "--openssldir=<INSTALL_DIR>/ssl"
-    no-shared no-tests no-apps no-docs no-module -fPIC
-    "CC=${CMAKE_C_COMPILER}" "AR=${CMAKE_AR}" "RANLIB=${CMAKE_RANLIB}"
-  BUILD_COMMAND ${SQLITE_MURMUR_MAKE} "-j${SQLITE_MURMUR_OPENSSL_JOBS}" build_libs
-  INSTALL_COMMAND ${SQLITE_MURMUR_MAKE} install_dev
-  BUILD_BYPRODUCTS "${_openssl_install}/lib/libcrypto.a"
-  LOG_CONFIGURE ON LOG_BUILD ON LOG_INSTALL ON
-)
-add_library(sqlite_murmur_crypto STATIC IMPORTED GLOBAL)
-set_target_properties(sqlite_murmur_crypto PROPERTIES
-  IMPORTED_LOCATION "${_openssl_install}/lib/libcrypto.a"
-  INTERFACE_INCLUDE_DIRECTORIES "${_openssl_install}/include"
-  INTERFACE_LINK_LIBRARIES "Threads::Threads;${CMAKE_DL_LIBS}")
-add_dependencies(sqlite_murmur_crypto sqlite_murmur_openssl_build)
 
 if(SQLITE_MURMUR_ENABLE_AEGIS256)
   # A parent application may set BUILD_SHARED_LIBS=ON. Override it only in

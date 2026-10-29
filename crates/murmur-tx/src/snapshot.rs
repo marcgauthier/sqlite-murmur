@@ -1,6 +1,6 @@
 //! Durable peer snapshot transfers. Spool records are the only authoritative state.
 use crate::{protocol::*, *};
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::Sha256;
 
 pub const OUT: &[u8] = b"07/replication/snapshot-v1/out/";
 pub const IN: &[u8] = b"07/replication/snapshot-v1/in/";
@@ -140,7 +140,7 @@ pub fn build(
     {
         return Err(Error::Overloaded);
     }
-    let transfer = rand::random();
+    let transfer = crate::randomness::bytes();
     let mut m = Manifest {
         database: identity.0,
         donor: identity.1,
@@ -197,7 +197,7 @@ pub fn build_stream(
     mut emit:impl FnMut(Vec<Record>)->Result<()>,
 )->Result<Manifest> {
     if progress.len()>4096{return Err(Error::Overloaded);}
-    let transfer=rand::random();
+    let transfer=crate::randomness::bytes();
     // Phase 1: preliminary pin+header. Chunkless by construction (a real
     // snapshot always carries at least the stream-magic chunk), so
     // receivers and reuse can tell it from a servable build.

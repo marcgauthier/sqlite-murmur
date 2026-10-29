@@ -351,7 +351,7 @@ impl Store {
                 store_id.copy_from_slice(&id_bytes);
             }
             Ok(None) => {
-                if rand::RngCore::try_fill_bytes(&mut rand::rngs::OsRng, &mut store_id).is_err() {
+                if crate::randomness::fill(&mut store_id).is_err() {
                     return SQLITE_ERROR;
                 }
                 let id_opts = WriteOptions::with_sync(sync);

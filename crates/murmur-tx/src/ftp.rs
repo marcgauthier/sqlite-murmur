@@ -458,9 +458,9 @@ fn tls_config(roots_pem: &[u8]) -> Result<Arc<rustls::ClientConfig>> {
         }
         let end = remaining.find(END)
             .ok_or_else(|| Error::Invalid("ftp trust roots: incomplete certificate PEM".into()))? + END.len();
-        let (_, der) = pem_rfc7468::decode_vec(remaining[..end].as_bytes())
+        let der = <rustls::pki_types::CertificateDer as rustls::pki_types::pem::PemObject>::from_pem_slice(remaining[..end].as_bytes())
             .map_err(|e| Error::Invalid(format!("ftp trust roots: {e}")))?;
-        certs.push(rustls::pki_types::CertificateDer::from(der));
+        certs.push(der);
         remaining = &remaining[end..];
     }
     if certs.is_empty() {

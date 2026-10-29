@@ -125,11 +125,11 @@ pub(crate) fn build_streaming(
         BUILD_GRACE_MILLIS, STREAM_MAGIC, chunk, header, pin_key,
     };
     use murmur_tx::encode;
-    use sha2::{Digest, Sha256};
+    use crate::crypto_provider::Sha256;
     if progress.len() > 4096 {
         return Err(murmur_tx::Error::Overloaded);
     }
-    let transfer: murmur_tx::NodeId = rand::random();
+    let transfer: murmur_tx::NodeId = crate::randomness::bytes();
     // Phase 1: preliminary pin+header, chunkless by construction.
     let prelim = Manifest {
         database: identity.0,
@@ -351,7 +351,7 @@ pub(crate) fn finish(
     };
     use murmur_tx::protocol::progress_key;
     use murmur_tx::{decode, encode};
-    use sha2::{Digest, Sha256};
+    use crate::crypto_provider::Sha256;
     if let Some(b) = backend.get(&receipt_key(transfer))? {
         let r: Incoming = decode(&b)?;
         if r.manifest.donor != source {

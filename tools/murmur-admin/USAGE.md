@@ -90,7 +90,7 @@ Offline master key rotation and store re-encryption:
 - Checks clean refusal on unsealed databases (`SQLITE_ERROR`, code 1).
 - Checks offline exclusivity (refuses running instances with store lock held).
 - Accepts keys via either 64 hex characters or 32 raw bytes (via `--key-file` / `--new-key-file`).
-- Cleanses sensitive key buffers in memory (`OPENSSL_cleanse`).
+- Cleanses sensitive key buffers with volatile writes and a compiler fence.
 - Stages the new master envelope in `meta:keyring.REKEY`.
 - Sweeps and re-encrypts all database pages under the fresh envelope's active data key (unkeyed pre-seal pages stay unkeyed). Supports crash recovery with staged-resume convergence (idempotent re-run after interrupted sweep).
 - Atomically commits the new envelope to `meta:keyring` and cleans up staged markers.

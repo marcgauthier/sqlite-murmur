@@ -21,8 +21,13 @@ projection). The 15 extended codes keep discriminator `0x5301..=0x530f`
 with the SQLite primary in the low byte; canonical values stay declared
 in `include/sqlite_murmur_errors.h`.
 
-The crate takes no registry dependencies yet, so the workspace lockfile
-gains only the root package entry and no vendor delta is needed. Later
-phases reuse the existing vendor closure (`crates/murmur-replication/vendor/`):
-`zstd-sys` for compression, `aes-gcm`/`hkdf`/`sha2` for crypto, and
-hand-written `extern "C"` bindings for the RocksDB C API and AEGIS.
+The current crate uses the workspace's pinned, vendored AWS-LC for AES-GCM,
+HKDF-SHA256, and SHA-256 through the internal `crates/common/` adapters.
+Compression uses shared hand-written bindings to the vendored C zstd archive;
+RocksDB and AEGIS likewise use hand-written `extern "C"` bindings. `zeroize`
+and `libc` remain direct dependencies; random bytes come from AWS-LC. Provider
+compatibility fixtures and the existing C++ compatibility suite preserve the
+original record formats.
+
+Dependency consolidation uses AWS-LC for randomness and storage cryptography.
+Original encrypted record formats are covered by compatibility fixtures.

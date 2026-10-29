@@ -137,7 +137,7 @@ pub(crate) fn endpoint_with_alpn(
     node: NodeId,
     alpn: &[u8],
 ) -> Result<quinn::Endpoint> {
-    let provider = Arc::new(rustls::crypto::ring::default_provider());
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     if node_id(&config.credentials.chain[0])? != node {
         return Err(Error::Auth("certificate is not for this node".into()));
     }

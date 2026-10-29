@@ -1,7 +1,7 @@
 //! Immutable authenticated file objects. Metadata belongs to the provided Spool backend.
 use crate::*;
-use aes_gcm::{Aes256Gcm,KeyInit,aead::{Aead,Payload}};
-use sha2::{Digest,Sha256};
+use crate::crypto_provider::{Aes256Gcm, Payload};
+use crate::crypto_provider::Sha256;
 use std::{path::{Path,PathBuf},io::{Read,Write},fs::{self,File,OpenOptions},time::UNIX_EPOCH};
 const CHUNK:usize=64<<10;
 #[derive(Clone)]
@@ -63,7 +63,7 @@ impl Objects {
         let key=if meta.generation==self.config.generation{&*self.config.key}else{self.config.previous_key.as_deref().ok_or_else(||Error::Auth("object key unavailable".into()))?};
         let derived=object_key(key,header[16..32].try_into().unwrap())?;
         // A unique hard link pins the container across replacement/GC on all platforms.
-        let pin=self.config.directory.join(format!(".download-{}",hex(&rand::random::<NodeId>())));
+        let pin=self.config.directory.join(format!(".download-{}",hex(&crate::randomness::bytes::<16>())));
         fs::hard_link(&path,&pin)?;self.staged_paths.lock().unwrap().insert(pin.clone());
         Ok(Download{meta,file,cipher:Aes256Gcm::new_from_slice(&*derived).unwrap(),header,index:0,offset:0,pending:zeroize::Zeroizing::new(Vec::new()),pending_pos:0,pin,active:self.staged_paths.clone()})
     }
@@ -78,7 +78,7 @@ impl Objects {
     /// exported prefix when resuming an external transfer.
     pub fn stream_plain_chunks(&self,name:&str,skip:u64,chunk_size:usize,mut emit:impl FnMut(u64,&[u8])->Result<()>)->Result<(Metadata,u64)>{if chunk_size==0{return Err(Error::Invalid("zero file chunk size".into()));}let meta=self.metadata(name)?.filter(|m|!m.deleted).ok_or_else(||Error::Unavailable("file metadata missing".into()))?;let mut sink=ChunkWriter{skip,position:skip,total:0,chunk_size,buffer:Vec::with_capacity(chunk_size),emit:&mut emit,error:None};let verified=self.verify(&self.path(meta.digest,meta.generation),&meta,&mut sink);if let Some(error)=sink.error.take(){return Err(error);}verified?;if !sink.buffer.is_empty(){let start=sink.position;(sink.emit)(start,&sink.buffer)?;sink.position+=sink.buffer.len() as u64;}Ok((meta,sink.total))}
     pub fn verify(&self,path:&Path,meta:&Metadata,output:impl Write)->Result<()>{let mut input=File::open(path).map_err(|_|Error::Unavailable("file payload unavailable".into()))?;self.verify_input(&mut input,meta,output)}
-    fn verify_input(&self,mut input:impl Read,meta:&Metadata,mut output:impl Write)->Result<()>{let mut header=[0;40];input.read_exact(&mut header)?;if &header[..8]!=b"SPFO0001" {return Err(Error::Auth("object header".into()));}let generation=u64::from_be_bytes(header[8..16].try_into().unwrap());let key=if generation==self.config.generation {&*self.config.key}else if generation.checked_add(1)==Some(self.config.generation){self.config.previous_key.as_deref().ok_or_else(||Error::Auth("object key unavailable".into()))?}else{return Err(Error::Auth("object key generation".into()));};let derived=object_key(key,header[16..32].try_into().unwrap())?;let cipher=Aes256Gcm::new_from_slice(&*derived).unwrap();let prefix=header[32..40].try_into().unwrap();let mut index=0u32;let mut hash=Sha256::new();let mut total=0u64;loop{let mut n=[0;4];input.read_exact(&mut n)?;let mut size=u32::from_be_bytes(n) as usize;let final_chunk=size==u32::MAX as usize;if final_chunk{input.read_exact(&mut n)?;size=u32::from_be_bytes(n) as usize;}if size>CHUNK+16 || size<16{return Err(Error::Auth("object chunk length".into()));}let mut encrypted=vec![0;size];input.read_exact(&mut encrypted)?;let mut aad=header.to_vec();aad.extend(index.to_be_bytes());if final_chunk{aad.extend(b"final");}let nonce=nonce(prefix,index);let plain=cipher.decrypt((&nonce).into(),Payload{msg:&encrypted,aad:&aad}).map_err(|_|Error::Auth("object authentication".into()))?;if final_chunk{let(length,digest):(u64,[u8;32])=decode(&plain)?;if length!=total || length!=meta.bytes || digest!=meta.digest || <[u8;32]>::from(hash.finalize())!=digest || input.read(&mut [0;1])?!=0 {return Err(Error::Auth("object length or digest".into()));}return Ok(());}total=total.checked_add(plain.len() as u64).ok_or(Error::Overloaded)?;if total>meta.bytes || total>self.config.max_file_bytes{return Err(Error::Overloaded);}hash.update(&plain);output.write_all(&plain)?;index=index.checked_add(1).ok_or(Error::Overloaded)?;}}
+    fn verify_input(&self,mut input:impl Read,meta:&Metadata,mut output:impl Write)->Result<()>{let mut header=[0;40];input.read_exact(&mut header)?;if &header[..8]!=b"SPFO0001" {return Err(Error::Auth("object header".into()));}let generation=u64::from_be_bytes(header[8..16].try_into().unwrap());let key=if generation==self.config.generation {&*self.config.key}else if generation.checked_add(1)==Some(self.config.generation){self.config.previous_key.as_deref().ok_or_else(||Error::Auth("object key unavailable".into()))?}else{return Err(Error::Auth("object key generation".into()));};let derived=object_key(key,header[16..32].try_into().unwrap())?;let cipher=Aes256Gcm::new_from_slice(&*derived).unwrap();let prefix=header[32..40].try_into().unwrap();let mut index=0u32;let mut hash=Sha256::new();let mut total=0u64;loop{let mut n=[0;4];input.read_exact(&mut n)?;let mut size=u32::from_be_bytes(n) as usize;let final_chunk=size==u32::MAX as usize;if final_chunk{input.read_exact(&mut n)?;size=u32::from_be_bytes(n) as usize;}if size>CHUNK+16 || size<16{return Err(Error::Auth("object chunk length".into()));}let mut encrypted=vec![0;size];input.read_exact(&mut encrypted)?;let mut aad=header.to_vec();aad.extend(index.to_be_bytes());if final_chunk{aad.extend(b"final");}let nonce=nonce(prefix,index);let plain=cipher.decrypt(&nonce,Payload{msg:&encrypted,aad:&aad}).map_err(|_|Error::Auth("object authentication".into()))?;if final_chunk{let(length,digest):(u64,[u8;32])=decode(&plain)?;if length!=total || length!=meta.bytes || digest!=meta.digest || <[u8;32]>::from(hash.finalize())!=digest || input.read(&mut [0;1])?!=0 {return Err(Error::Auth("object length or digest".into()));}return Ok(());}total=total.checked_add(plain.len() as u64).ok_or(Error::Overloaded)?;if total>meta.bytes || total>self.config.max_file_bytes{return Err(Error::Overloaded);}hash.update(&plain);output.write_all(&plain)?;index=index.checked_add(1).ok_or(Error::Overloaded)?;}}
     pub fn path(&self,digest:[u8;32],generation:u64)->PathBuf{self.config.directory.join(format!("{}.g{generation}.spfo",hex(&digest)))}
     /// Map a fetch transfer id to its `(part, identity-sidecar)` staging
     /// paths. Same-crate seam for the [`crate::filefetch::FetchObjects`]
@@ -89,7 +89,7 @@ impl Objects {
     /// Re-encrypt up to `limit` old-generation objects with the current key.
     /// Metadata generation is the durable progress marker, so a restart resumes
     /// by scanning for the next stale entry.
-    pub fn rotate_keys(&self,limit:usize)->Result<usize>{let mut rotated=0;for listed in self.list()?{if rotated>=limit{break;}if listed.generation==self.config.generation||!self.path(listed.digest,listed.generation).is_file(){continue;}let _guard=self.gate.lock().unwrap();let Some(current)=self.metadata(&listed.name)? else{continue;};if current.deleted||current.digest!=listed.digest||current.generation==self.config.generation{continue;}let raw=self.config.directory.join(format!(".rotate-{}",hex(&rand::random::<NodeId>())));let result=(||->Result<Metadata>{let mut plain=private_file(&raw)?;self.verify(&self.path(current.digest,current.generation),&current,&mut plain)?;plain.sync_all()?;drop(plain);self.upload_inner(&current.name,File::open(&raw)?)})();let _=fs::remove_file(&raw);result?;rotated+=1;}Ok(rotated)}
+    pub fn rotate_keys(&self,limit:usize)->Result<usize>{let mut rotated=0;for listed in self.list()?{if rotated>=limit{break;}if listed.generation==self.config.generation||!self.path(listed.digest,listed.generation).is_file(){continue;}let _guard=self.gate.lock().unwrap();let Some(current)=self.metadata(&listed.name)? else{continue;};if current.deleted||current.digest!=listed.digest||current.generation==self.config.generation{continue;}let raw=self.config.directory.join(format!(".rotate-{}",hex(&crate::randomness::bytes::<16>())));let result=(||->Result<Metadata>{let mut plain=private_file(&raw)?;self.verify(&self.path(current.digest,current.generation),&current,&mut plain)?;plain.sync_all()?;drop(plain);self.upload_inner(&current.name,File::open(&raw)?)})();let _=fs::remove_file(&raw);result?;rotated+=1;}Ok(rotated)}
     /// Report whether this store still contains any object or staged transfer
     /// that may need an older file key. This is a local-store check.
     pub fn key_rotation_status(&self)->Result<KeyRotationStatus>{let mut old_generation_metadata_missing_locally=0;for meta in self.list()?{if meta.generation!=self.config.generation&&!self.path(meta.digest,meta.generation).is_file(){old_generation_metadata_missing_locally+=1;}}let mut old_generation_objects=0;let mut staged_transfers=0;for entry in fs::read_dir(&self.config.directory)?{let entry=entry?;let name=entry.file_name().to_string_lossy().into_owned();if name=="staging"&&entry.file_type()?.is_dir(){for staged in fs::read_dir(entry.path())?{if staged?.file_type()?.is_file(){staged_transfers+=1;}}}else if let Some((_,generation))=parse_object_name(&name){if generation!=self.config.generation{old_generation_objects+=1;}}}let previous_key_unused_locally=old_generation_objects==0&&old_generation_metadata_missing_locally==0&&staged_transfers==0;Ok(KeyRotationStatus{current_generation:self.config.generation,old_generation_objects,old_generation_metadata_missing_locally,staged_transfers,previous_key_unused_locally})}
@@ -109,7 +109,7 @@ fn check_name(name:&str)->Result<()>{if name.is_empty() || name.len()>4096 || na
 fn now()->u64{std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64}
 pub(crate) fn private_file(path:&Path)->Result<File>{let mut opts=OpenOptions::new();opts.write(true).create_new(true);#[cfg(unix)]{use std::os::unix::fs::OpenOptionsExt;opts.mode(0o600);}Ok(opts.open(path)?)}
 
-fn object_key(master:&[u8;32],salt:&[u8;16])->Result<zeroize::Zeroizing<[u8;32]>> {let hk=hkdf::Hkdf::<Sha256>::new(Some(salt),master);let mut key=zeroize::Zeroizing::new([0;32]);hk.expand(b"murmur/sqlite-file-object/v1",&mut *key).map_err(|_|Error::Auth("object key derivation".into()))?;Ok(key)}
+fn object_key(master:&[u8;32],salt:&[u8;16])->Result<zeroize::Zeroizing<[u8;32]>> {let mut key=zeroize::Zeroizing::new([0;32]);crate::crypto_provider::hkdf_sha256(master, salt, b"murmur/sqlite-file-object/v1",&mut *key).map_err(|_|Error::Auth("object key derivation".into()))?;Ok(key)}
 
 // Transfer ownership is transient; Spool remains authoritative for metadata.
 pub struct StagedTransfer { objects: Arc<Objects>, paths: Vec<PathBuf> }
@@ -127,7 +127,7 @@ mod staging_tests {
     #[test]
     fn collection_preserves_active_transfer_and_identity_until_guard_is_released() {
         let dir =
-            std::env::temp_dir().join(format!("murmur-staging-{}", hex(&rand::random::<NodeId>())));
+            std::env::temp_dir().join(format!("murmur-staging-{}", hex(&crate::randomness::bytes::<16>())));
         let objects = Arc::new(
             Objects::open(
                 Config::new(dir.clone(), [3; 32], "127.0.0.1:0".parse().unwrap()),
@@ -180,10 +180,10 @@ impl Upload {
     fn new(objects:&Objects,name:&str)->Result<Self>{
         check_name(name)?;
         let reservation=objects.reserve_staging(128)?;
-        let path=objects.config.directory.join(format!(".upload-{}",hex(&rand::random::<NodeId>())));
+        let path=objects.config.directory.join(format!(".upload-{}",hex(&crate::randomness::bytes::<16>())));
         let mut file=private_file(&path)?;
-        let salt:[u8;16]=rand::random();let derived=object_key(&objects.config.key,&salt)?;
-        let prefix:[u8;8]=rand::random();let mut header=b"SPFO0001".to_vec();
+        let salt:[u8;16]=crate::randomness::bytes();let derived=object_key(&objects.config.key,&salt)?;
+        let prefix:[u8;8]=crate::randomness::bytes();let mut header=b"SPFO0001".to_vec();
         header.extend(objects.config.generation.to_be_bytes());header.extend(salt);header.extend(prefix);
         if let Err(e)=file.write_all(&header){drop(file);let _=fs::remove_file(&path);return Err(e.into());}
         objects.staged_paths.lock().unwrap().insert(path.clone());
@@ -202,7 +202,7 @@ impl Upload {
     fn flush_chunk(&mut self)->Result<()>{
         if self.pending.is_empty(){return Ok(());}
         let mut aad=self.header.clone();aad.extend(self.index.to_be_bytes());
-        let encrypted=self.cipher.encrypt((&nonce(self.prefix,self.index)).into(),Payload{msg:&self.pending,aad:&aad}).map_err(|_|Error::Auth("object encryption".into()))?;
+        let encrypted=self.cipher.encrypt(&nonce(self.prefix,self.index),Payload{msg:&self.pending,aad:&aad}).map_err(|_|Error::Auth("object encryption".into()))?;
         let file=self.file.as_mut().unwrap();file.write_all(&(encrypted.len() as u32).to_be_bytes())?;file.write_all(&encrypted)?;
         self.index=self.index.checked_add(1).ok_or(Error::Overloaded)?;
         use zeroize::Zeroize;self.pending.zeroize();self.pending.clear();Ok(())
@@ -211,7 +211,7 @@ impl Upload {
         self.flush_chunk()?;
         let digest:[u8;32]=self.hash.clone().finalize().into();let terminal=encode(&(self.total,digest))?;
         let mut aad=self.header.clone();aad.extend(self.index.to_be_bytes());aad.extend(b"final");
-        let encrypted=self.cipher.encrypt((&nonce(self.prefix,self.index)).into(),Payload{msg:&terminal,aad:&aad}).map_err(|_|Error::Auth("object trailer encryption".into()))?;
+        let encrypted=self.cipher.encrypt(&nonce(self.prefix,self.index),Payload{msg:&terminal,aad:&aad}).map_err(|_|Error::Auth("object trailer encryption".into()))?;
         let mut file=self.file.take().unwrap();file.write_all(&u32::MAX.to_be_bytes())?;file.write_all(&(encrypted.len() as u32).to_be_bytes())?;file.write_all(&encrypted)?;file.sync_all()?;drop(file);
         let path=objects.path(digest,self.generation);
         if path.exists(){fs::remove_file(&self.path)?;}else{fs::rename(&self.path,&path)?;sync_directory(&objects.config.directory)?;}
@@ -232,7 +232,7 @@ impl Download {
                 if !(16..=CHUNK+16).contains(&n){return Err(Error::Auth("object chunk length".into()));}
                 let mut encrypted=vec![0;n];self.file.read_exact(&mut encrypted)?;
                 let mut aad=self.header.to_vec();aad.extend(self.index.to_be_bytes());let prefix=self.header[32..40].try_into().unwrap();
-                use zeroize::Zeroize;self.pending.zeroize();*self.pending=self.cipher.decrypt((&nonce(prefix,self.index)).into(),Payload{msg:&encrypted,aad:&aad}).map_err(|_|Error::Auth("object authentication".into()))?;self.index+=1;
+                use zeroize::Zeroize;self.pending.zeroize();*self.pending=self.cipher.decrypt(&nonce(prefix,self.index),Payload{msg:&encrypted,aad:&aad}).map_err(|_|Error::Auth("object authentication".into()))?;self.index+=1;
             }
             let n=(limit-out.len()).min(self.pending.len()-self.pending_pos);out.extend_from_slice(&self.pending[self.pending_pos..self.pending_pos+n]);self.pending_pos+=n;self.offset+=n as u64;
             if self.pending_pos==self.pending.len(){use zeroize::Zeroize;self.pending.zeroize();self.pending_pos=0;}

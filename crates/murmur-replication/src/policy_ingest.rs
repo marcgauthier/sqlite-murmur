@@ -593,7 +593,7 @@ pub(crate) fn apply_op(
             let tag = Tag {
                 database: actor_pair.0,
                 node: actor_pair.1,
-                transaction: rand::random(),
+                transaction: crate::randomness::bytes(),
                 operation: 0,
             };
             let tag_bytes = murmur_policy::model::encode(&tag).map_err(policy_err)?;

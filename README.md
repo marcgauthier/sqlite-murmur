@@ -68,6 +68,14 @@ vendored sources, `cmake/` for static build integration, and `tests/` and
 `benchmarks/` for consumers. Build artifacts and platform-specific static archives
 stay outside version control; GitHub checkouts build them from vendored sources.
 
+Rust storage and replication use the pinned, vendored AWS-LC provider for
+AES-256-GCM, HKDF-SHA256, SHA-256, TLS, and cryptographic randomness. Managed
+UUID-v5 identifiers use an internal compatibility helper backed by AWS-LC.
+Storage and transport share bindings
+to the vendored C zstd archive. These provider changes preserve existing
+page records, key envelopes, file objects, and replication formats. See
+[`VENDORS.md`](VENDORS.md) for dependency ownership and remaining transitive crates.
+
 ## Architecture
 
 - SQLite's main database file is virtual. The path supplied to SQLite becomes a
@@ -186,8 +194,23 @@ interval, not an upper bound on loss or flush latency.
 
 ## Dependencies and build
 
+The workspace includes a small internal `ipnet` compatibility crate for CIDR
+allowlists and HTTP proxy exclusions. Its root `[patch.crates-io]` also redirects
+`hyper-util` to this implementation. Rust consumers building outside this
+workspace must apply the same patch to select the internal subset. Its source
+provenance and retained licenses are in `crates/murmur-ipnet/PROVENANCE.md`.
+
+AWS-LC builds its vendored native sources using CMake and a C/C++ toolchain;
+Perl is also required by the native build. Storage-only builds need these
+prerequisites as well. No dependency downloads are required. For direct Cargo
+tests, first build the native libraries with CMake, then select that build tree
+with `MURMUR_BUILD_DIR=/absolute/path/to/build`. The default is `build-a1` at the
+repository root. Transport tests link its vendored zstd archive rather than a
+system zstd installation. Direct Cargo tests also need a host SQLite development
+library.
+
 All third-party library source is checked into [`third-party/`](third-party/README.md):
-SQLite's amalgamation, RocksDB, Zstd, libaegis, OpenSSL, cr-sqlite and Murmur's
+SQLite's amalgamation, RocksDB, Zstd, libaegis, cr-sqlite and Murmur's
 locked Rust dependencies. A checkout configures and builds without downloading dependencies or
 using installed library packages. Only the platform toolchain and build tools are
 needed. On Debian/Ubuntu:
@@ -204,15 +227,17 @@ ctest --test-dir build --output-on-failure
 ```
 
 The first build compiles the bundled libraries and takes longer than later builds.
-OpenSSL uses its own out-of-tree Perl/GNU Make build; other libraries use CMake.
-`SQLITE_MURMUR_OPENSSL_JOBS` controls OpenSSL's parallelism (default 2).
+Vendored OpenSSL is no longer built, linked, or installed. The system `openssl`
+command remains a test tool for generating and inspecting certificates.
 Linux and macOS builds use their native compilers and system runtime libraries.
-Native Windows/cross-compilation is not configured by this OpenSSL wrapper.
+Native Windows/cross-compilation is not configured by the project build.
 
 AEGIS-256, cr-sqlite and Murmur are enabled by default and link statically.
 Loadable extension libraries are disabled by default; advanced users can request
-`-DSQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS=ON`. Third-party linkage needs no
-shared libraries; normal platform runtime libraries (such as libc/libstdc++)
+`-DSQLITE_MURMUR_BUILD_LOADABLE_EXTENSIONS=ON`. The optional Murmur loadable
+module resolves SQLite and `sqlite_murmur_file_key_*` symbols from its host;
+CMake hosts must enable symbol exports with `ENABLE_EXPORTS ON`, as the loadable
+test driver does. Third-party linkage needs no shared libraries; normal platform runtime libraries (such as libc/libstdc++)
 remain system dependencies. This does not force a fully static OS runtime.
 
 Tests and the `benchmark` executable are enabled for a standalone checkout and
@@ -538,16 +563,15 @@ See `include/sqlite_murmur.h` for `sqlite_murmur_register`,
 
 The `benchmark` executable runs two comparison groups: **test 1 without
 replication**, and **test 2 with local cr-sqlite change tracking**. Each group
-runs these six cases sequentially through the same bundled SQLite library:
+runs these four cases sequentially through the same bundled SQLite library:
 
 | Backend | Inserts per transaction | Encryption | Compression |
 | --- | --- | --- | --- |
 | sqlite-murmur | 1 and 100 | Always enabled | Always enabled |
 | Plain SQLite on disk, 1 GiB SQLite page-cache target | 1 and 100 | Disabled | Disabled |
-| Plain SQLite `:memory:` | 1 and 100 | Disabled | Disabled |
 
 ```bash
-./build/benchmark                         # All 12 cases, 60 measured seconds each
+./build/benchmark                         # All eight cases, 60 measured seconds each
 ./build/benchmark --suite=no-replication   # Test 1 only
 ./build/benchmark --suite=crsqlite         # Test 2 only
 ./build/benchmark --seconds=0.01           # Quick matrix and integrity check
@@ -565,7 +589,7 @@ also has a 64 MiB VFS block cache target and a 32 MiB RocksDB block cache.
 | --- | --- | --- |
 | `--suite` | `all` | `all`, `no-replication`, `crsqlite`, `single` |
 | `--seconds` | 60 per case | Greater than 0, up to 3600; fractional values supported |
-| `--backend` | `murmur` | Single mode: `murmur`, `sqlite-disk`, `sqlite-memory` |
+| `--backend` | `murmur` | Single mode: `murmur`, `sqlite-disk` |
 | `--batch-size` | 1 in single mode | Single mode: inserts per transaction, 1 through 1,000,000 |
 | `--replication` | `off` in single mode | Single mode: `off`, `on` for local tracking |
 | `--ingest` | `local` | Single mode: `local`, `row`, `blob`; incoming modes require Murmur and enable cr-sqlite |
@@ -589,9 +613,8 @@ AEGIS-256 and Zstd3, with DELETE journaling, `synchronous=FULL`, and a 100 ms
 background persistence interval. Plain disk SQLite uses its native VFS,
 WAL journaling and `synchronous=NORMAL`, with normal automatic checkpoints.
 Its final persistence barrier flushes the page cache and truncates/checkpoints
-the WAL. Memory SQLite uses MEMORY journaling with `synchronous=OFF` and is volatile.
-These configurations have different commit durability guarantees; Murmur's FULL
-setting does not make its acknowledged commits wait for background persistence.
+the WAL. These configurations have different commit durability guarantees;
+Murmur's FULL setting does not make its acknowledged commits wait for background persistence.
 
 Every case emits `BENCH_CONFIG`, `BENCH_HEADER`, `BENCH_CSV`, and `BENCH_DONE`.
 CSV rows identify suite, backend, replication, and transaction size. Each group
@@ -599,17 +622,17 @@ also prints a comparison table and Murmur-to-SQLite ratios at matching batch siz
 `BENCH_SUITE_DONE` marks successful completion of the entire request. Reports
 include total/read/write throughput, final persistence time and inclusive
 throughput, mean write transaction time, logical size, and total `disk_bytes`.
-Murmur-specific statistics use `NA` for plain SQLite; memory disk size and
-persistence time are zero. The 1x transaction timer covers the insert only;
+Murmur-specific statistics use `NA` for plain SQLite. The 1x transaction timer
+covers the insert only;
 the 100x timer includes interleaved reads. Compression savings include seeding.
 Fixed-duration cases create different row counts, so compare bytes per row as well
 as total size. Disk sizes include regular database/storage files after close;
 they do not measure cumulative write traffic or allocated filesystem blocks.
 
-All disk cases verify row counts and integrity after reopening; memory cases
-verify before closing. Replicated cases also verify exported change counts.
+All cases verify row counts and integrity after reopening. Replicated cases also
+verify exported change counts.
 A build without cr-sqlite can run test 1 but rejects test 2 and the default full
-suite. CI validates and uploads the full 12-case, 60-second-per-case report.
+suite. CI validates and uploads the full eight-case, 60-second-per-case report.
 
 The C API `sqlite_murmur_get_stats(path, &stats)` snapshots cumulative per-Store
 VFS/persistence counters and RocksDB WAL, SST-flush and compaction write counters.

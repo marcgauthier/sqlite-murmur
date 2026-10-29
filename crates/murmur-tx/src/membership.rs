@@ -17,7 +17,7 @@ impl View {
             if member.state==State::Alive {self.suspect.remove(&member.node);} self.members.insert(member.node,member);
         }
     }
-    pub fn gossip(&self)->Vec<Member> {let mut out=vec![self.local.clone()];use rand::seq::IteratorRandom;out.extend(self.members.values().choose_multiple(&mut rand::thread_rng(),3).into_iter().cloned());out}
+    pub fn gossip(&self)->Vec<Member> {let mut out=vec![self.local.clone()];out.extend(crate::randomness::sample(self.members.values(),3).into_iter().cloned());out}
     pub fn acknowledged(&mut self,node:NodeId,nonce:u64) {if self.pending.get(&node).is_some_and(|(_,n,_)|*n==nonce){self.pending.remove(&node);self.awareness=self.awareness.saturating_sub(1);}}
     pub fn expire(&mut self)->Vec<(NodeId,u64)> {
         let now=std::time::Instant::now();let timeout=Duration::from_millis(500*(self.awareness as u64+1));

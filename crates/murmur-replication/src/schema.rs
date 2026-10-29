@@ -23,7 +23,7 @@
 
 use crate::*;
 use murmur_tx::protocol::SignedSchema;
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::Sha256;
 
 #[derive(Clone, Debug)]
 pub(crate) struct SchemaParams {

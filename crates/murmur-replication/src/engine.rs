@@ -261,7 +261,7 @@ impl Live {
                     pending.retain(|address|!connected.contains(address));
                     let mut addresses=self.seeds.lock().unwrap().clone();
                     {let view=self.view.lock().unwrap();addresses.extend(view.members.values().filter(|m|m.state==State::Alive&&!view.excluded.contains(&m.node)).map(|m|m.address));for m in view.members.values().filter(|m|view.excluded.contains(&m.node)){addresses.remove(&m.address);}}
-                    use rand::seq::SliceRandom;let mut addresses:Vec<_>=addresses.into_iter().collect();addresses.shuffle(&mut rand::thread_rng());
+                    let mut addresses:Vec<_>=addresses.into_iter().collect();crate::randomness::shuffle(&mut addresses);
                     for address in addresses{
                         if tasks.len()>=self.cfg.sessions*4||pending.len()>=8||self.peers.lock().unwrap().len()>=self.cfg.sessions{break;}
                         if !transport::network_allowed(&self.cfg,address)||connected.contains(&address)||pending.contains(&address)||retries.get(&address).is_some_and(|(at,_)|*at>std::time::Instant::now()){continue;}
@@ -275,7 +275,7 @@ impl Live {
                 },
                 Some((address,success))=results.recv()=>{
                     pending.remove(&address);let attempt=if success{0}else{retries.get(&address).map_or(1,|(_,n)|(n+1).min(6))};
-                    let wait=(1u64<<attempt).min(60)*1000+rand::random::<u64>()%500;
+                    let wait=(1u64<<attempt).min(60)*1000+crate::randomness::below(500) as u64;
                     retries.insert(address,(std::time::Instant::now()+Duration::from_millis(wait),attempt));
                 },
                 Some(_)=tasks.join_next()=>{},
@@ -1320,13 +1320,9 @@ impl Live {
         if let Ok(data) = encode(&packet)
             && data.len() <= 1000
         {
-            use rand::seq::IteratorRandom;
-            for peer in self
-                .peers
-                .lock()
-                .unwrap()
-                .values()
-                .choose_multiple(&mut rand::thread_rng(), self.cfg.gossip_fanout)
+            for peer in crate::randomness::sample(
+                self.peers.lock().unwrap().values(), self.cfg.gossip_fanout,
+            )
             {
                 let _ = peer.connection.send_datagram(data.clone().into());
             }
@@ -1342,16 +1338,11 @@ impl Live {
     }
     fn probe(&self) {
         let lost = self.view.lock().unwrap().expire();
-        use rand::seq::IteratorRandom;
-        let target = self
-            .peers
-            .lock()
-            .unwrap()
-            .keys()
-            .copied()
-            .choose(&mut rand::thread_rng());
+        let target = crate::randomness::choose(
+            self.peers.lock().unwrap().keys().copied(),
+        );
         if let Some(target) = target {
-            let nonce = rand::random();
+            let nonce = crate::randomness::u64();
             let members = {
                 let mut v = self.view.lock().unwrap();
                 v.pending

@@ -1,14 +1,11 @@
-//! Test-only native linkage for `murmur-storage`.
+//! Native linkage for `murmur-storage` and its Cargo tests.
 //!
-//! The CMake staticlib never links: its `rocksdb_*` / `ZSTD_*` /
-//! `aegis256_*` / `sqlite3_*` references resolve from the vendored archives
-//! at final link, exactly like the former C++ objects. Emitting
-//! `rustc-link-lib` here is inert for `--crate-type staticlib` output, so
-//! these directives only take effect for `cargo test` builds, which link
-//! real binaries. Prerequisites: a configured CMake build tree (default
-//! `../../build-a1`, override with `MURMUR_BUILD_DIR`) plus the system
-//! SQLite in `/tmp/sqlitelib` (see the `/tmp/sqlitelib` workaround: the
-//! host lacks `libsqlite3-dev`, so tests link a symlinked `libsqlite3.so`).
+//! CMake builds the vendored native archives before invoking Cargo and passes
+//! its build tree through `MURMUR_BUILD_DIR` (default `../../build-a1`). Rust
+//! staticlib output bundles these static native archives; CMake also supplies
+//! native libraries needed by other objects at the final application link.
+//! Cargo tests link SQLite directly, requiring the host SQLite development
+//! library or the local `/tmp/sqlitelib/libsqlite3.so` workaround.
 
 fn main() {
     let manifest = std::env::var("CARGO_MANIFEST_DIR").unwrap();
@@ -25,10 +22,13 @@ fn main() {
     // Order matters: dependents first.
     println!("cargo:rustc-link-lib=static=rocksdb");
     println!("cargo:rustc-link-lib=static=zstd");
-    println!("cargo:rustc-link-lib=static=aegis");
+    if std::env::var_os("CARGO_FEATURE_AEGIS256").is_some() {
+        println!("cargo:rustc-link-lib=static=aegis");
+    }
     println!("cargo:rustc-link-lib=sqlite3");
     println!("cargo:rustc-link-lib=stdc++");
     println!("cargo:rustc-link-lib=dl");
     println!("cargo:rustc-link-lib=m");
     println!("cargo:rerun-if-env-changed=MURMUR_BUILD_DIR");
+    println!("cargo:rerun-if-changed={build}/third-party/zstd/lib/libzstd.a");
 }

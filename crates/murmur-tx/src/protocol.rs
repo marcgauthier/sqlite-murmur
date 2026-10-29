@@ -1,6 +1,6 @@
 //! Canonical SQLite replication profile. Deliberately distinct from RIME v6.
 use crate::*;
-use sha2::{Sha256,Digest};
+use crate::crypto_provider::Sha256;
 pub const VERSION:u16=13;
 pub const ALPN:&[u8]=b"murmur-sqlite/1";
 pub const FRAME_BYTES:usize=8<<20;
@@ -92,7 +92,7 @@ impl Prepared {
     pub(crate) fn new(message:&Message)->Result<Self> {
         let data=encode(message)?;if data.len()>FRAME_BYTES{return Err(Error::Overloaded);}
         let charge=data.len()+12;
-        let (data,flags)=if data.len()>1024 {let compressed=zstd::stream::encode_all(data.as_slice(),3)?;if compressed.len()+4<data.len(){let mut bytes=(data.len() as u32).to_be_bytes().to_vec();bytes.extend(compressed);(bytes,0x8002u16)}else{(data,0u16)}}else{(data,0u16)};
+        let (data,flags)=if data.len()>1024 {let compressed=crate::compression::compress(data.as_slice(),3)?;if compressed.len()+4<data.len(){let mut bytes=(data.len() as u32).to_be_bytes().to_vec();bytes.extend(compressed);(bytes,0x8002u16)}else{(data,0u16)}}else{(data,0u16)};
         let mut bytes=vec![0u8;12];bytes[..2].copy_from_slice(b"RD");bytes[2..4].copy_from_slice(&VERSION.to_be_bytes());bytes[4..6].copy_from_slice(&message.kind().to_be_bytes());bytes[6..8].copy_from_slice(&flags.to_be_bytes());bytes[8..12].copy_from_slice(&(data.len() as u32).to_be_bytes());bytes.extend(data);
         Ok(Self{bytes,charge})
     }
@@ -105,10 +105,9 @@ pub async fn read(stream:&mut quinn::RecvStream)->Result<Message> {
     if &h[..2]!=b"RD" || u16::from_be_bytes(h[2..4].try_into().unwrap())!=VERSION || ![0u16,0x8002].contains(&u16::from_be_bytes(h[6..8].try_into().unwrap())) || n>FRAME_BYTES {return Err(Error::Protocol("invalid frame header".into()));}
     let mut b=vec![0;n];stream.read_exact(&mut b).await.map_err(|e|Error::Protocol(e.to_string()))?;
     if u16::from_be_bytes(h[6..8].try_into().unwrap())==0x8002 {
-        use std::io::Read;
         if b.len()<4{return Err(Error::Protocol("compressed frame length".into()));}
         let expected=u32::from_be_bytes(b[..4].try_into().unwrap()) as usize;if expected>FRAME_BYTES{return Err(Error::Overloaded);}
-        let decoder=zstd::stream::read::Decoder::new(&b[4..])?;let mut plain=Vec::new();decoder.take(expected as u64+1).read_to_end(&mut plain)?;if plain.len()!=expected{return Err(Error::Protocol("decompressed frame size".into()));}b=plain;
+        let plain=crate::compression::decompress_to_limit(&b[4..],expected+1)?;if plain.len()!=expected{return Err(Error::Protocol("decompressed frame size".into()));}b=plain;
     }
     let message:Message=decode(&b)?;if message.kind()!=u16::from_be_bytes(h[4..6].try_into().unwrap()) {return Err(Error::Protocol("frame type mismatch".into()));}Ok(message)
 }
@@ -124,7 +123,7 @@ pub fn schema_accepted_key(signer:NodeId)->Vec<u8> {format!("07/replication/sche
 pub fn local_records(backend:&dyn Backend,payload:Vec<u8>,schema:&[u8],millis:u64,logical:u32,signing:&[u8;32])->Result<Vec<Record>> {
     let(db,node)=backend.identity();
     let seq=backend.get(&sequence_key(node))?.map(|b|decode::<u64>(&b)).transpose()?.unwrap_or(0).checked_add(1).ok_or_else(||Error::Protocol("origin sequence exhausted".into()))?;
-    let mut tx=Transaction{database:db,origin:node,sequence:seq,id:rand::random(),millis,logical,schema:Sha256::digest(schema).into(),payload_digest:[0;32],payload,signature:Vec::new()};tx.sign(signing)?;
+    let mut tx=Transaction{database:db,origin:node,sequence:seq,id:crate::randomness::bytes(),millis,logical,schema:Sha256::digest(schema).into(),payload_digest:[0;32],payload,signature:Vec::new()};tx.sign(signing)?;
     Ok(vec![Record::put(crate::retention::time_key(node,seq),encode(&crate::retention::now_millis())?),Record::put(log_key(node,seq),encode(&tx)?),Record::put(sequence_key(node),encode(&seq)?),Record::put(progress_key(node),encode(&seq)?),Record::put(receipt_key(node,seq),tx.digest()?.to_vec())])
 }
 pub fn schema_digest(bytes:&[u8])->[u8;32] {Sha256::digest(bytes).into()}

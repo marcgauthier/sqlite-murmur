@@ -43,7 +43,7 @@ Methods/fields keep their exact archive shape; only the two visibilities widen.
 
 | File | Contents |
 | --- | --- |
-| `Cargo.toml` | `murmur-tx` path dep + `tokio`/`zeroize`/`serde_json`/`aes-gcm`/`hkdf`/`sha2`/`rand` (all locked/vendored per the lead's A5a note; zero new crates); `tempfile` dev-dep. No standalone lock (workspace member). No `rusqlite` (lead's impl lives in `murmur-replication`). |
+| `Cargo.toml` | `murmur-tx` path dep + `tokio`/`zeroize`/`serde_json`/`aws-lc-rs` (all locked/vendored per the lead's A5a note; zero new crates); `tempfile` dev-dep. No standalone lock (workspace member). No `rusqlite` (lead's impl lives in `murmur-replication`). |
 | `src/lib.rs` | Crate seam; re-exports `murmur_tx::{Backend,Error,NodeId,Record,bridge,filefetch,files,ftp}` |
 | `src/adapt.rs` | 12-pragma spec (`murmur_files_dir` dropped), `Knobs`, `objects_config` builder, hex helpers, `actions::` over `SqliteObjects` |
 | `src/hosts.rs` | `Hosts` over the injected `ChunkStore` (configure + file/bridge shims), pending-split fetch guards, unattached bridge files |
@@ -102,3 +102,6 @@ Methods/fields keep their exact archive shape; only the two visibilities widen.
   expired staging incl. pin protection, rotation-status counts.
   `rustfmt --check` clean on all sources. Workspace `cargo check` stays
   green (no downstream references the changed APIs yet).
+
+Dependency consolidation uses AWS-LC for randomness and file cryptography.
+Original file formats are covered by compatibility fixtures.

@@ -1,0 +1,85 @@
+{
+  "source": "Previous C/C++ benchmark tables supplied by the user in this conversation; raw configurations and load information were not supplied.",
+  "rows": [
+    {
+      "replication": "off",
+      "backend": "murmur",
+      "batch_size": 1,
+      "ops_per_second": 351934.499567,
+      "ops_per_second_including_persistence": 351044.24606,
+      "mean_write_transaction_ms": 0.0064,
+      "logical_database_bytes": 344092672,
+      "disk_bytes": 37609619
+    },
+    {
+      "replication": "off",
+      "backend": "murmur",
+      "batch_size": 100,
+      "ops_per_second": 855544.578229,
+      "ops_per_second_including_persistence": 853728.842821,
+      "mean_write_transaction_ms": 0.584351,
+      "logical_database_bytes": 830824448,
+      "disk_bytes": 90663147
+    },
+    {
+      "replication": "off",
+      "backend": "sqlite-disk",
+      "batch_size": 1,
+      "ops_per_second": 114293.568031,
+      "ops_per_second_including_persistence": 114268.338764,
+      "mean_write_transaction_ms": 0.026702,
+      "logical_database_bytes": 114438144,
+      "disk_bytes": 114438144
+    },
+    {
+      "replication": "off",
+      "backend": "sqlite-disk",
+      "batch_size": 100,
+      "ops_per_second": 669723.027361,
+      "ops_per_second_including_persistence": 669715.200752,
+      "mean_write_transaction_ms": 0.746509,
+      "logical_database_bytes": 652181504,
+      "disk_bytes": 652181504
+    },
+    {
+      "replication": "on",
+      "backend": "murmur",
+      "batch_size": 1,
+      "ops_per_second": 195672.04686,
+      "ops_per_second_including_persistence": 195352.659315,
+      "mean_write_transaction_ms": 0.018371,
+      "logical_database_bytes": 356646912,
+      "disk_bytes": 79998267
+    },
+    {
+      "replication": "on",
+      "backend": "murmur",
+      "batch_size": 100,
+      "ops_per_second": 424931.461942,
+      "ops_per_second_including_persistence": 419663.569,
+      "mean_write_transaction_ms": 1.176594,
+      "logical_database_bytes": 766951424,
+      "disk_bytes": 160809346
+    },
+    {
+      "replication": "on",
+      "backend": "sqlite-disk",
+      "batch_size": 1,
+      "ops_per_second": 29396.866401,
+      "ops_per_second_including_persistence": 29396.553177,
+      "mean_write_transaction_ms": 0.152343,
+      "logical_database_bytes": 59469824,
+      "disk_bytes": 59469824
+    },
+    {
+      "replication": "on",
+      "backend": "sqlite-disk",
+      "batch_size": 100,
+      "ops_per_second": 276461.698397,
+      "ops_per_second_including_persistence": 276430.172622,
+      "mean_write_transaction_ms": 1.808492,
+      "logical_database_bytes": 497991680,
+      "disk_bytes": 497991680
+    }
+  ]
+}

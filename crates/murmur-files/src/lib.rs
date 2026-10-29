@@ -7,6 +7,11 @@
 //! FF/1 frames, bridge bundle v1) and the QUIC/TLS endpoint stack stay
 //! canonical in murmur-tx and are reused, never copied. See PROVENANCE.md.
 
+#[path = "../../common/crypto.rs"]
+mod crypto_provider;
+#[path = "../../common/random.rs"]
+mod randomness;
+
 pub mod adapt;
 pub mod hosts;
 pub mod objects;

@@ -15,11 +15,10 @@ def validate(output, duration, expected=None):
         for key, value in expected.items():
             assert config[key] == str(value), (key, config[key], value)
     murmur = config["backend"] == "murmur"
-    memory = config["backend"] == "sqlite-memory"
     assert config["encryption"] == ("on" if murmur else "off")
-    assert config["journal_mode"] == ("delete" if murmur else "memory" if memory else "wal")
-    assert config["synchronous"] == ("2" if murmur else "0" if memory else "1")
-    assert config["persistence"] == ("periodic_flush" if murmur else "volatile" if memory else "wal_checkpoint")
+    assert config["journal_mode"] == ("delete" if murmur else "wal")
+    assert config["synchronous"] == ("2" if murmur else "1")
+    assert config["persistence"] == ("periodic_flush" if murmur else "wal_checkpoint")
     if murmur:
         assert 1 <= int(config["background_threads"]) <= 256
         assert int(config["cache_bytes"]) == int(config["cache_pages"]) * 4096
@@ -45,15 +44,13 @@ def validate(output, duration, expected=None):
     assert float(row["ops_per_second_including_persistence"]) <= float(row["ops_per_second"])
     assert int(row["logical_database_bytes"]) > 0
     assert int(row["logical_database_bytes"]) % int(config["page_size"]) == 0
-    assert (int(row["disk_bytes"]) == 0) if memory else (int(row["disk_bytes"]) > 0)
+    assert int(row["disk_bytes"]) > 0
     assert row["zstd_level"] == config["zstd_level"]
     if murmur:
         assert int(row["rocksdb_files_bytes"]) == int(row["disk_bytes"])
         assert 0 <= float(row["compression_savings_pct"]) <= 100
     else:
         assert row["rocksdb_files_bytes"] == row["compression_savings_pct"] == "NA"
-    if memory:
-        assert float(row["persistence_seconds"]) == 0
     for field in ("backend", "suite", "replication", "batch_size"):
         assert row[field] == config[field]
     if config["replication"] == "on":
@@ -89,9 +86,11 @@ def validate_suite(output, duration, groups=("off", "on")):
         seen.add(key)
         assert row["suite"] == ("crsqlite" if row["replication"] == "on" else "no-replication")
     assert seen == {(replication, backend, batch) for replication in groups
-                    for backend in ("murmur", "sqlite-disk", "sqlite-memory") for batch in (1, 100)}, seen
+                    for backend in ("murmur", "sqlite-disk") for batch in (1, 100)}, seen
     for replication in groups:
         assert ("Test 2: cr-sqlite local change tracking" if replication == "on" else "Test 1: no replication") in output
+    assert "sqlite-memory" not in output
+    assert "SQLite memory" not in output
     assert output.count("| Backend | Inserts/tx |") == len(groups)
     assert output.count("| Inserts/tx | Murmur / SQLite disk ops/s |") == len(groups)
 
@@ -133,14 +132,14 @@ def main():
         run = subprocess.run([binary, "--seconds=0.01", f"--cipher={cipher}", *suite_args], capture_output=True, text=True, timeout=60)
         assert run.returncode == 0, run.stdout + run.stderr
         validate_suite(run.stdout, 0.01, groups)
-    for backend in ("sqlite-disk", "sqlite-memory"):
+    for backend in ("sqlite-disk",):
         run = subprocess.run([binary, "--suite=single", f"--backend={backend}", "--seconds=0.01", "--page-size=8192"], capture_output=True, text=True, timeout=30)
         assert run.returncode == 0, run.stdout + run.stderr
         validate(run.stdout, 0.01, {"backend": backend, "page_size": 8192})
     if aegis != "ON":
         run = subprocess.run([binary, "--suite=single", "--seconds=0.01"], capture_output=True, text=True, timeout=5)
         assert run.returncode == 2 and "SQLITE_MURMUR_ENABLE_AEGIS256=ON" in run.stderr
-    invalid = ["--suite=invalid", "--backend=invalid", "--compression=none", "--ingest=invalid","--background-threads=0", "--background-threads=257", "--background-threads=-1", "--background-threads=invalid","--replication=invalid","--seconds=0", "--seconds=-1", "--seconds=nan", "--seconds=inf", "--seconds=1junk",
+    invalid = ["--backend=sqlite-memory", "--suite=invalid", "--backend=invalid", "--compression=none", "--ingest=invalid","--background-threads=0", "--background-threads=257", "--background-threads=-1", "--background-threads=invalid","--replication=invalid","--seconds=0", "--seconds=-1", "--seconds=nan", "--seconds=inf", "--seconds=1junk",
                "--seconds=3601", "--unknown", "--flush-interval-ms=0", "--flush-interval-ms=4294967296",
                "--cache-pages=0", "--cache-pages=-1", "--cache-pages=18446744073709551616",
                "--page-size=4097", "--page-size=256", "--cipher=unknown", "--compression=zstd0",

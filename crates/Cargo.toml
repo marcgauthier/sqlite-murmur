@@ -14,5 +14,10 @@ members = [
     "murmur-storage-api",
     "murmur-admin",
     "murmur-admin-bin",
+    "murmur-ipnet",
 ]
 resolver = "2"
+
+# One internal CIDR subset serves Murmur and hyper-util without a vendor fork.
+[patch.crates-io]
+ipnet = { path = "murmur-ipnet" }

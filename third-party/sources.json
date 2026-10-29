@@ -24,12 +24,6 @@
     "sha256": "6b593142ddcbe412dcfdfa108c2ab3d7d62c550607b39441b4304151f32c85cd"
   },
   {
-    "name": "openssl",
-    "version": "3.5.9",
-    "url": "https://codeload.github.com/openssl/openssl/tar.gz/refs/tags/openssl-3.5.9",
-    "sha256": "796831ec533bf41998eaaee9d632d921b8a69f57394fa4086ff01a941113d26d"
-  },
-  {
     "name": "cr-sqlite",
     "version": "cr-sqlite-2",
     "base_version": "0.16.3",
@@ -149,5 +143,23 @@
     "provenance": "crates/murmur-admin-bin/PROVENANCE.md",
     "cargo": "vendored via Cargo.lock; crates in crates/murmur-replication/vendor/",
     "dir": "crates"
+  },
+  {
+    "name": "common",
+    "version": "0.1.0",
+    "dir": "crates",
+    "local_source": "Internal AWS-LC adapters and shared vendored zstd bindings",
+    "description": "Shared source modules compiled into each consuming Rust crate; includes dependency compatibility fixtures"
+  },
+  {
+    "name": "murmur-ipnet",
+    "version": "2.12.2",
+    "dir": "crates",
+    "local_source": "Extracted subset of vendored ipnet 2.12.2",
+    "upstream_repository": "https://github.com/krisprice/ipnet",
+    "upstream_commit": "13c5c5873c02127679b1e8e64b538e4e36942640",
+    "upstream_package_checksum": "791930b43c0d5973160d90a8f3894509f2b273430f5c5c73b668636d0287c5c0",
+    "description": "Locally maintained CIDR/Serde subset; Cargo patch serves Murmur and hyper-util; retains upstream MIT and Apache-2.0 notices",
+    "provenance": "crates/murmur-ipnet/PROVENANCE.md"
   }
 ]

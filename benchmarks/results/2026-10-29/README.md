@@ -42,3 +42,11 @@ material keeps the volatile primitive. All wipe assertions still pass
 The batch-1 re-run after the fix is the Rust number above.
 
 Raw outputs sit alongside this report (`*-cpp.txt` vs `*-rust.txt`).
+
+## Full disk comparison matrix
+
+The newer [Rust storage versus plain SQLite report](rust-disk-comparison-140647Z.records.md)
+contains eight completed 60-second disk-backed cases: Murmur and SQLite disk,
+1 and 100 inserts per transaction, with local cr-sqlite tracking off and on.
+It includes a comparison to the user-provided earlier C/C++ tables and links to
+measurement records, CSV, and run metadata. SQLite memory cases are excluded.

@@ -14,13 +14,7 @@
 
 use crate::error::{SQLITE_AUTH, SQLITE_CORRUPT, SQLITE_ERROR, SQLITE_MISUSE, SQLITE_OK};
 use crate::guard;
-use aes_gcm::{
-    Aes256Gcm, KeyInit, Nonce,
-    aead::{Aead, Payload},
-};
-use hkdf::Hkdf;
-use rand::{RngCore, rngs::OsRng};
-use sha2::Sha256;
+use crate::crypto_provider::{Aes256Gcm, Payload};
 use std::ffi::{CStr, c_char, c_int};
 use std::{ptr, slice};
 use zeroize::{Zeroize, Zeroizing};
@@ -74,9 +68,8 @@ fn crc32c(data: &[u8]) -> u32 {
 
 /// RFC 5869 HKDF-SHA256, L=32 (single expand block).
 fn hkdf_32(ikm: &[u8], salt: &[u8], info: &[u8]) -> Option<[u8; 32]> {
-    let hk = Hkdf::<Sha256>::new(Some(salt), ikm);
     let mut out = [0u8; 32];
-    hk.expand(info, &mut out).ok()?;
+    crate::crypto_provider::hkdf_sha256(ikm, salt, info, &mut out).ok()?;
     Some(out)
 }
 
@@ -129,7 +122,7 @@ fn aesgcm_seal(
     let cipher = Aes256Gcm::new_from_slice(key).ok()?;
     cipher
         .encrypt(
-            Nonce::from_slice(nonce),
+            nonce,
             Payload { msg: plain, aad },
         )
         .ok()
@@ -144,7 +137,7 @@ fn aesgcm_open(
     let cipher = Aes256Gcm::new_from_slice(key).ok()?;
     cipher
         .decrypt(
-            Nonce::from_slice(nonce),
+            nonce,
             Payload { msg: sealed, aad },
         )
         .ok()
@@ -153,13 +146,13 @@ fn aesgcm_open(
 
 fn random_32() -> Result<[u8; KEY_LEN], c_int> {
     let mut buf = [0u8; KEY_LEN];
-    OsRng.try_fill_bytes(&mut buf).map_err(|_| SQLITE_ERROR)?;
+    crate::randomness::fill(&mut buf).map_err(|_| SQLITE_ERROR)?;
     Ok(buf)
 }
 
 fn random_12() -> Result<[u8; NONCE_LEN], c_int> {
     let mut buf = [0u8; NONCE_LEN];
-    OsRng.try_fill_bytes(&mut buf).map_err(|_| SQLITE_ERROR)?;
+    crate::randomness::fill(&mut buf).map_err(|_| SQLITE_ERROR)?;
     Ok(buf)
 }
 

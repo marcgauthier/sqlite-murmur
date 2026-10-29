@@ -42,7 +42,7 @@ pub fn peer_id(connection:&quinn::Connection,config:&Config)->Result<NodeId> {
 }
 pub fn endpoint(config:&Config,node:NodeId)->Result<quinn::Endpoint> {endpoint_with_alpn(config,node,protocol::ALPN)}
 pub fn endpoint_with_alpn(config:&Config,node:NodeId,alpn:&[u8])->Result<quinn::Endpoint> {
-    let provider=Arc::new(rustls::crypto::ring::default_provider());
+    let provider=Arc::new(rustls::crypto::aws_lc_rs::default_provider());
     if node_id(&config.credentials.chain[0])?!=node {return Err(Error::Auth("certificate is not for this node".into()));}
     let mut roots=rustls::RootCertStore::empty();for der in &config.credentials.roots {roots.add(CertificateDer::from(der.clone())).map_err(|e|Error::Auth(e.to_string()))?;}
     let chain:Vec<_>=config.credentials.chain.iter().cloned().map(CertificateDer::from).collect();

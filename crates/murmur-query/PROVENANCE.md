@@ -64,16 +64,19 @@ NOT imported: WP-A/backend owns it.
 
 ## Dependencies
 
-Direct deps pin the exact versions already vendored for
-`murmur-replication` (rusqlite 0.40.2, serde 1.0.229, serde_json 1.0.154,
-postcard 1.1.3, sha2 0.10.9, thiserror 2.0.21, tempfile 3.27.0) plus three
-new crates for the parent vendor dir (lead merge): `uuid =1.28.0`
-(features `v5`, archive pin), `sha1_smol =1.0.1` (uuid native dep), and
-`sqlite-vec =0.1.6` (optional, behind the default-on `vector` feature;
-archive pin; build-dep `cc` already vendored). The parent `vec0.c` from
-MURMUR-SQL was NOT copied (lead: never copy it).
+Direct dependencies pin versions from the shared vendor tree: rusqlite 0.40.2,
+serde 1.0.229, serde_json 1.0.154, postcard 1.1.3, aws-lc-rs 1.18.2,
+thiserror 2.0.21, and test-only tempfile 3.27.0. `sqlite-vec =0.1.6` is optional
+behind the default-on `vector` feature (its build dependency `cc` is vendored).
+Managed UUID-v5 generation uses the internal AWS-LC compatibility helper;
+`uuid` and `sha1_smol` are no longer active workspace dependencies. The parent
+`vec0.c` from MURMUR-SQL was not copied.
 
 The supplied archive has no top-level LICENSE or license field in its
 manifests. This records provenance; it does not assign a new license to
 the imported material. Retain any applicable author permissions when
 redistributing.
+
+Dependency consolidation uses AWS-LC for randomness and the internal UUID-v5
+helper where needed. Original identifier formats are covered by compatibility
+fixtures. The standalone `murmur-crdt` reference workspace remains unchanged.

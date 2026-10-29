@@ -13,14 +13,13 @@ for tests remain build prerequisites.
 | `zstd/` | 1.5.7 | VFS compression before encryption | BSD-3-Clause / GPL-2.0 alternatives; see `zstd/LICENSE`, `zstd/COPYING` |
 | `aegis/` | 0.9.1 | AEGIS-256 authenticated encryption | MIT; see `aegis/LICENSE` |
 | `cr-sqlite/` | cr-sqlite-2 local snapshot | Optional CRR replication, pinned Rust submodule and locked Cargo crates | MIT; see `cr-sqlite/LICENSE` and individual crate licenses |
-| `openssl/` | 3.5.9 LTS | AES-256-GCM, cryptographic randomness and memory cleansing | Apache-2.0; see `openssl/LICENSE.txt` and upstream notices |
 
 First-party Rust crates live in `../crates/` (workspace `../crates/Cargo.toml`),
 not here; only their upstream archive provenance is recorded in `sources.json`.
 
-AES-256-GCM is supplied by OpenSSL; there is no separate handwritten AES library.
-OpenSSL's normal static default provider is built in, so no external provider
-modules are needed. RocksDB's optional external compression libraries, gflags,
+AES-256-GCM, TLS, cryptographic randomness and hashing are supplied by the
+vendored `aws-lc-rs` / AWS-LC dependency in the Rust vendor tree. OpenSSL is
+not vendored or linked; its system CLI is used only by certificate tests. RocksDB's optional external compression libraries, gflags,
 allocators and liburing are disabled. RocksDB compression remains disabled:
 the VFS compresses plaintext with Zstd before encrypting it.
 

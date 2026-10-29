@@ -1,6 +1,6 @@
 //! A separate CRR protocol: intentionally incompatible with Murmur Spool frames.
 use crate::*;
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::Sha256;
 pub const ALPN: &[u8] = b"murmur-crsqlite/1";
 pub const FRAME_BYTES: usize = 128 << 10;
 pub const CHUNK_BYTES: usize = 64 << 10;

@@ -8,11 +8,8 @@
 //! directions, sizes spanning every framing boundary). See PROVENANCE.md.
 
 use crate::{Error, Result};
-use aes_gcm::{
-    Aes256Gcm, KeyInit,
-    aead::{Aead, Payload},
-};
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::{Aes256Gcm, Payload};
+use crate::crypto_provider::Sha256;
 
 /// Plaintext bytes per container frame (archived `CHUNK`).
 pub(crate) const PLAIN_CHUNK: usize = 64 << 10;
@@ -26,9 +23,8 @@ pub(crate) fn object_key(
     master: &[u8; 32],
     salt: &[u8; 16],
 ) -> Result<zeroize::Zeroizing<[u8; 32]>> {
-    let hk = hkdf::Hkdf::<Sha256>::new(Some(salt), master);
     let mut key = zeroize::Zeroizing::new([0; 32]);
-    hk.expand(b"murmur/sqlite-file-object/v1", &mut *key)
+    crate::crypto_provider::hkdf_sha256(master, salt, b"murmur/sqlite-file-object/v1", &mut *key)
         .map_err(|_| Error::Auth("object key derivation".into()))?;
     Ok(key)
 }
@@ -115,9 +111,9 @@ impl<'e> SealWriter<'e> {
         max: u64,
         emit: impl FnMut(&[u8]) -> Result<()> + Send + 'e,
     ) -> Result<Self> {
-        let salt: [u8; 16] = rand::random();
+        let salt: [u8; 16] = crate::randomness::bytes();
         let derived = object_key(key, &salt)?;
-        let prefix: [u8; 8] = rand::random();
+        let prefix: [u8; 8] = crate::randomness::bytes();
         let mut header = b"SPFO0001".to_vec();
         header.extend(generation.to_be_bytes());
         header.extend(salt);
@@ -176,7 +172,7 @@ impl<'e> SealWriter<'e> {
         let encrypted = self
             .cipher
             .encrypt(
-                (&nonce(self.prefix, self.index)).into(),
+                &nonce(self.prefix, self.index),
                 Payload {
                     msg: &self.pending,
                     aad: &aad,
@@ -205,7 +201,7 @@ impl<'e> SealWriter<'e> {
         let encrypted = self
             .cipher
             .encrypt(
-                (&nonce(self.prefix, self.index)).into(),
+                &nonce(self.prefix, self.index),
                 Payload {
                     msg: &terminal,
                     aad: &aad,
@@ -303,7 +299,7 @@ impl<S: ByteSource> OpenReader<S> {
             let plain = self
                 .cipher
                 .decrypt(
-                    (&nonce(self.prefix, self.index)).into(),
+                    &nonce(self.prefix, self.index),
                     Payload {
                         msg: &encrypted,
                         aad: &aad,
@@ -352,7 +348,7 @@ impl<S: ByteSource> OpenReader<S> {
         let plain = self
             .cipher
             .decrypt(
-                (&nonce(self.prefix, self.index)).into(),
+                &nonce(self.prefix, self.index),
                 Payload {
                     msg: &encrypted,
                     aad: &aad,
@@ -361,5 +357,31 @@ impl<S: ByteSource> OpenReader<S> {
             .map_err(|_| Error::Auth("object authentication".into()))?;
         self.index += 1;
         Ok(plain)
+    }
+}
+
+#[cfg(test)]
+mod compatibility_tests {
+    use super::*;
+
+    #[test]
+    fn original_provider_spfo_container() {
+        let plain = b"sqlite-murmur dependency compatibility";
+        let original = include_bytes!("../../common/fixtures/object.spfo");
+        let mut reader = OpenReader::open(
+            std::io::Cursor::new(original), &[1; 32], None, 0,
+            plain.len() as u64, Sha256::digest(plain), 1 << 20,
+        ).unwrap();
+        let mut output = Vec::new();
+        reader.verify_to(&mut |bytes| { output.extend_from_slice(bytes); Ok(()) }).unwrap();
+        assert_eq!(output, plain);
+        let mut corrupted = *original;
+        let last = corrupted.len() - 1;
+        corrupted[last] ^= 1;
+        let mut reader = OpenReader::open(
+            std::io::Cursor::new(corrupted), &[1; 32], None, 0,
+            plain.len() as u64, Sha256::digest(plain), 1 << 20,
+        ).unwrap();
+        assert!(reader.verify_to(&mut |_| Ok(())).is_err());
     }
 }

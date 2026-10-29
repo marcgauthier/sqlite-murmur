@@ -76,7 +76,7 @@ def build(kdf, seq, salt, a_time, a_mem, a_threads, wrap_hint, store,
     hdr += crc32c(hdr).to_bytes(4, "little")
     prot = protector(kdf, master, passphrase, salt, a_time, a_mem, a_threads,
                      store, context)
-    # Fixed nonce per vector (documented below); production uses RAND_bytes.
+    # Fixed nonce per vector (documented below); production uses AWS-LC randomness.
     nonce = NONCE
     sealed = AESGCM(prot).encrypt(nonce, body, hdr + store)
     return hdr + nonce + len(sealed).to_bytes(4, "little") + sealed

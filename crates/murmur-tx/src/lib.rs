@@ -8,6 +8,13 @@
 //! module and its `Handle`/`start` entry points are excluded (CRR engine
 //! lives downstream), the archived `engine::parse_id` helper is provided
 //! locally as [`parse_id`], and test-support modules are excluded.
+#[path = "../../common/crypto.rs"]
+mod crypto_provider;
+#[path = "../../common/random.rs"]
+mod randomness;
+#[path = "../../common/zstd.rs"]
+mod compression;
+
 pub mod bridge;
 pub mod files;
 pub mod policies;

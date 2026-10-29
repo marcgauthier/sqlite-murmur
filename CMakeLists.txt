@@ -37,7 +37,7 @@ target_include_directories(sqlite_murmur
 # archives (first sqlite3_* users) precede libsqlite_murmur_sqlite.a,
 # whose single amalgamation object then resolves every later SQLite
 # reference (including the cr-sqlite/murmur archives appended below).
-# OpenSSL/RocksDB/zstd likewise follow their users.
+# RocksDB/zstd likewise follow their users.
 include(cmake/MurmurStorage.cmake)
 include(cmake/MurmurStorageApi.cmake)
 target_link_libraries(sqlite_murmur INTERFACE
@@ -51,7 +51,6 @@ endif()
 
 target_link_libraries(sqlite_murmur INTERFACE
   $<BUILD_INTERFACE:sqlite_murmur_sqlite> $<INSTALL_INTERFACE:sqlite_murmur::sqlite3>
-  $<BUILD_INTERFACE:sqlite_murmur_crypto> $<INSTALL_INTERFACE:sqlite_murmur::crypto>
   $<BUILD_INTERFACE:rocksdb> $<INSTALL_INTERFACE:sqlite_murmur::rocksdb>
   $<BUILD_INTERFACE:libzstd_static> $<INSTALL_INTERFACE:sqlite_murmur::zstd>
   Threads::Threads ${CMAKE_DL_LIBS}
@@ -180,7 +179,7 @@ install(EXPORT sqlite_murmurTargets
 
 # Install the statically linked dependency archives with relocatable package targets.
 install(FILES $<TARGET_FILE:sqlite_murmur_sqlite> $<TARGET_FILE:rocksdb>
-              $<TARGET_FILE:libzstd_static> $<TARGET_FILE:sqlite_murmur_crypto>
+              $<TARGET_FILE:libzstd_static>
         DESTINATION ${CMAKE_INSTALL_LIBDIR})
 if(SQLITE_MURMUR_ENABLE_AEGIS256)
   install(FILES $<TARGET_FILE:aegis> DESTINATION ${CMAKE_INSTALL_LIBDIR})
@@ -202,8 +201,10 @@ install(FILES third-party/rocksdb/LICENSE.Apache third-party/rocksdb/LICENSE.lev
         DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sqlite_murmur/rocksdb)
 install(FILES third-party/zstd/LICENSE third-party/zstd/COPYING
         DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sqlite_murmur/zstd)
-install(FILES third-party/openssl/LICENSE.txt
-        DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sqlite_murmur/openssl)
+if(SQLITE_MURMUR_ENABLE_MURMUR)
+  install(FILES crates/murmur-ipnet/LICENSE-MIT crates/murmur-ipnet/LICENSE-APACHE
+          DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sqlite_murmur/ipnet)
+endif()
 if(SQLITE_MURMUR_ENABLE_AEGIS256)
   install(FILES third-party/aegis/LICENSE
           DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/sqlite_murmur/aegis)

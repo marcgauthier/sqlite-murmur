@@ -43,7 +43,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
-          timeout 1500s ./build/benchmark | tee benchmark-results.txt
+          timeout 1200s ./build/benchmark | tee benchmark-results.txt
       - name: Validate benchmark report
         run: |
           python3 - <<'PY'

@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 // === From murmur-crdt/src/digest.rs (verbatim) ===
 // SHA-256 for managed persistence, logical keys and stable schema identities.
-use sha2::{Digest, Sha256};
+use crate::crypto_provider::Sha256;
 
 pub fn hash(bytes: &[u8]) -> [u8; 32] {
     Sha256::digest(bytes).into()
@@ -276,9 +276,7 @@ pub fn uuid(table: &str, collations: &[String], values: &[Value]) -> Result<Stri
             }
         }
     }
-    Ok(::uuid::Uuid::new_v5(&::uuid::Uuid::NAMESPACE_URL, &bytes)
-        .hyphenated()
-        .to_string())
+    Ok(crate::uuid_provider::v5_url(&bytes))
 }
 
 pub fn validate_row(t: &Table, row: &RowState) -> Result<()> {

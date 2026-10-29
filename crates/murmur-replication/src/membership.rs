@@ -95,11 +95,9 @@ impl View {
     }
     pub fn gossip(&self) -> Vec<Member> {
         let mut out = vec![self.local.clone()];
-        use rand::seq::IteratorRandom;
+
         out.extend(
-            self.members
-                .values()
-                .choose_multiple(&mut rand::thread_rng(), 3)
+            crate::randomness::sample(self.members.values(), 3)
                 .into_iter()
                 .cloned(),
         );

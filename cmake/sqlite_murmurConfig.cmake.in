@@ -15,8 +15,6 @@ set_target_properties(sqlite_murmur::sqlite3 PROPERTIES
 _sqlite_murmur_import(rocksdb "@CMAKE_STATIC_LIBRARY_PREFIX@rocksdb@CMAKE_STATIC_LIBRARY_SUFFIX@")
 set_target_properties(sqlite_murmur::rocksdb PROPERTIES INTERFACE_LINK_LIBRARIES "Threads::Threads;@CMAKE_DL_LIBS@")
 _sqlite_murmur_import(zstd "@CMAKE_STATIC_LIBRARY_PREFIX@zstd@CMAKE_STATIC_LIBRARY_SUFFIX@")
-_sqlite_murmur_import(crypto "libcrypto.a")
-set_target_properties(sqlite_murmur::crypto PROPERTIES INTERFACE_LINK_LIBRARIES "Threads::Threads;@CMAKE_DL_LIBS@")
 if(@SQLITE_MURMUR_ENABLE_AEGIS256@)
   _sqlite_murmur_import(aegis "@CMAKE_STATIC_LIBRARY_PREFIX@aegis@CMAKE_STATIC_LIBRARY_SUFFIX@")
 endif()

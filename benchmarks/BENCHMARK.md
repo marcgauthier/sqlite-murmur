@@ -1,7 +1,7 @@
 # SQLite Murmur benchmark results
 
 The default benchmark compares encrypted, compressed sqlite-murmur against plain
-SQLite on disk and in memory, with and without local cr-sqlite change tracking.
+SQLite on disk, with and without local cr-sqlite change tracking.
 The older measurements below are retained as history; they are Murmur-only and
 must not be presented as measurements of the new comparison matrix.
 
@@ -13,12 +13,10 @@ The `benchmark` executable runs both groups by default:
 | --- | --- | --- | --- |
 | Test 1 | Disabled | sqlite-murmur | 1 and 100 |
 | Test 1 | Disabled | Plain SQLite disk, 1 GiB page cache | 1 and 100 |
-| Test 1 | Disabled | Plain SQLite `:memory:` | 1 and 100 |
 | Test 2 | Local cr-sqlite tracking | sqlite-murmur | 1 and 100 |
 | Test 2 | Local cr-sqlite tracking | Plain SQLite disk, 1 GiB page cache | 1 and 100 |
-| Test 2 | Local cr-sqlite tracking | Plain SQLite `:memory:` | 1 and 100 |
 
-All 12 cases use the same bundled SQLite library, schema, prepared statements,
+All eight cases use the same bundled SQLite library, schema, prepared statements,
 50,000 seeded rows, deterministic random ID generator, and fixed highly
 compressible text payload. Each case performs 80% primary-key reads / 20% inserts
 through one connection for 60 measured seconds by default. One insert and four
@@ -40,13 +38,12 @@ uses its 64 MiB VFS cache target and 32 MiB RocksDB cache. SQLite pages default 
 | --- | --- | --- | --- |
 | Murmur | DELETE | FULL | 100 ms background interval by default; final Murmur checkpoint |
 | Plain disk SQLite | WAL | NORMAL | Automatic WAL checkpoints plus final cache flush and WAL truncate checkpoint |
-| Plain memory SQLite | MEMORY | OFF | Volatile; no persistence |
 
 These policies have different commit durability guarantees. Murmur acknowledges
 commits before background persistence despite its SQLite FULL setting. WAL/NORMAL
-does not synchronize each commit. Memory throughput has no disk durability cost.
+does not synchronize each commit.
 The report gives both active throughput and throughput including final persistence;
-for memory, persistence time and disk bytes are zero.
+both backends include their final persistence barrier.
 
 Each case emits `BENCH_CONFIG`, `BENCH_HEADER`, `BENCH_CSV`, and `BENCH_DONE`.
 CSV rows identify backend, group, replication, and batch size. Each group prints
@@ -59,10 +56,32 @@ At 1x transaction latency times just the insert; at 100x it includes interleaved
 reads. Different cases insert different numbers of rows; compare bytes per row
 alongside file sizes. Compression savings include seed data.
 
-Disk databases are reopened for row-count, integrity, and replication-change
-checks; memory databases are checked before closing. No new 60-second comparison
-measurements are recorded here yet. Use the commands below or the CI artifact to
-obtain a complete report; short smoke runs verify behavior, not performance.
+All databases are reopened for row-count, integrity, and replication-change
+checks. Short smoke runs verify behavior, not performance.
+
+## Rust storage results — October 29, 2026
+
+Each cell below comes from a completed 60-second measurement on the Intel Core
+i5-6500, using the configuration above. The Rust storage implementation is linked
+behind the stable C ABI; the benchmark driver remains C++. SQLite memory cases
+have been removed from the runner and these results.
+
+| Replication | Inserts/tx | Rust Murmur ops/sec | SQLite disk ops/sec | Murmur / disk | Murmur ops/sec incl. persistence |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Off | 1 | 402,228 | 100,892 | 3.99× | 400,267 |
+| Off | 100 | 899,942 | 656,012 | 1.37× | 898,078 |
+| Local cr-sqlite | 1 | 191,243 | 29,204 | 6.55× | 190,919 |
+| Local cr-sqlite | 100 | 363,866 | 250,090 | 1.45× | 360,023 |
+
+Against the previous C/C++ tables supplied by the user, Murmur throughput changed
+by **+14.29% / +5.19%** without replication (1x / 100x), and **−2.26% / −14.37%**
+with local cr-sqlite tracking. These are single trials taken at different times;
+plain SQLite also varied, so the differences do not isolate the migration’s effect.
+
+[Full tables, disk sizes, C/C++ comparison, measurement records, and run metadata](results/2026-10-29/rust-disk-comparison-140647Z.records.md).
+The run started before memory cases were removed; all eight disk-backed cases
+completed, then the remaining memory cases were stopped. Published measurement
+records are an unchanged extraction of those eight completed cases.
 
 ## Historical Murmur-only mixed results — October 28, 2026
 
@@ -160,9 +179,9 @@ vendored sources offline:
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
 cmake --build build --parallel 2
 ctest --test-dir build --output-on-failure
-./build/benchmark                         # Both groups: 12 x 60 seconds, plus setup/checks
-./build/benchmark --suite=no-replication   # Test 1: six cases
-./build/benchmark --suite=crsqlite         # Test 2: six cases
+./build/benchmark                         # Both groups: 8 x 60 seconds, plus setup/checks
+./build/benchmark --suite=no-replication   # Test 1: four cases
+./build/benchmark --suite=crsqlite         # Test 2: four cases
 ./build/benchmark --seconds=0.01           # Quick verification of the full matrix
 # One custom case (batch/backend/replication/ingestion overrides require single):
 ./build/benchmark --suite=single --backend=sqlite-disk --replication=on --batch-size=100
@@ -182,7 +201,7 @@ Use `--suite=no-replication` for comparisons without CRR tracking. The historica
 matrix above used the previous `sqlite_murmur_bench` executable and different
 settings; its measurements are retained as history and are not directly comparable
 to the current local mixed workload. The current GitHub Actions workflow runs the
-full comparison matrix, validates all 12 cases, and uploads the raw report.
+full comparison matrix, validates all eight cases, and uploads the raw report.
 
 ## Interpretation of historical results
 

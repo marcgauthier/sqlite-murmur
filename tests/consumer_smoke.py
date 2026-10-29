@@ -19,6 +19,15 @@ def main():
         root = pathlib.Path(directory)
         install = root / 'install'
         run(cmake, '--install', build, '--prefix', install)
+        for archive in ('libcrypto.a', 'crypto.lib', 'libssl.a', 'ssl.lib'):
+            assert not list(install.rglob(archive)), f'Unexpected OpenSSL archive: {archive}'
+        for config in install.rglob('*.cmake'):
+            assert 'sqlite_murmur::crypto' not in config.read_text(), config
+        if list(install.rglob('libmurmur_replication.a')):
+            for name in ('LICENSE-MIT', 'LICENSE-APACHE'):
+                copies = [p for p in install.rglob(name) if p.parent.name == 'ipnet']
+                assert len(copies) == 1, f'Missing internal ipnet license: {name}'
+                assert copies[0].read_bytes() == (source / 'crates/murmur-ipnet' / name).read_bytes()
         run(cmake, '-S', source / 'examples/consumer', '-B', root / 'build',
             f'-DCMAKE_PREFIX_PATH={install}')
         run(cmake, '--build', root / 'build', '--parallel', '2')

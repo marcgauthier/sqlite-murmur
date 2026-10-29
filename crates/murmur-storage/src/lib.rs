@@ -5,6 +5,11 @@
 //! Ported modules keep their `extern "C"` symbol names so the existing
 //! C/C++ test drivers and consumer applications link unchanged.
 
+#[path = "../../common/crypto.rs"]
+mod crypto_provider;
+#[path = "../../common/random.rs"]
+mod randomness;
+
 pub mod abi;
 pub mod backup;
 pub mod crypto;

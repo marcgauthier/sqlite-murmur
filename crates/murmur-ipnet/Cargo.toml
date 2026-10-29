@@ -1,0 +1,15 @@
+[package]
+name = "ipnet"
+version = "2.12.2"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "Internal ipnet API subset for Murmur allowlists and hyper-util proxy matching"
+
+[features]
+default = ["std"]
+std = []
+serde = ["dep:serde"]
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"], optional = true, default-features = false }

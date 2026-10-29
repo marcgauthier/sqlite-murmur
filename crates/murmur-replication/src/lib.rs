@@ -1,4 +1,9 @@
 //! Embedded SQLite replication. SQL is the client interface; QUIC is peer-only.
+#[path = "../../common/crypto.rs"]
+mod crypto_provider;
+#[path = "../../common/random.rs"]
+mod randomness;
+
 mod backend;
 mod config;
 pub(crate) mod ownership;

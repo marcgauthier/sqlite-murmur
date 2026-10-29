@@ -11,11 +11,10 @@
 //! - EXP4 `EXP4|flag|keyid_le4|nonce32|ct|tag32`, AAD
 //!   `EXP4|flag|page_be8|keyid_le4` (sealed AEGIS).
 //!
-//! AES-GCM goes through the vendored `aes-gcm` crate (as in `keyring`),
-//! AEGIS through the vendored libaegis FFI, nonces through `OsRng`.
+//! AES-GCM goes through the shared AWS-LC adapter (as in `keyring`),
+//! AEGIS through the vendored libaegis FFI, nonces through AWS-LC.
 
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce, aead::{Aead, Payload}};
-use rand::{RngCore, rngs::OsRng};
+use crate::crypto_provider::{Aes256Gcm, Payload};
 
 use crate::ffi_zstd::{self, Dctx};
 #[cfg(feature = "aegis256")]
@@ -76,7 +75,7 @@ fn aegis_aad(magic: &[u8; 4], flag: u8, page: u64, key_id: Option<u32>) -> Vec<u
 
 fn random_nonce<const N: usize>() -> Option<[u8; N]> {
     let mut nonce = [0u8; N];
-    OsRng.try_fill_bytes(&mut nonce).ok()?;
+    crate::randomness::fill(&mut nonce).ok()?;
     Some(nonce)
 }
 
@@ -99,7 +98,7 @@ fn encrypt_aes(
     let cipher = Aes256Gcm::new_from_slice(key).ok()?;
     let sealed = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &nonce,
             Payload { msg: data, aad: &aad },
         )
         .ok()?;
@@ -347,7 +346,7 @@ fn decrypt_aes_to_plain(
     let cipher = Aes256Gcm::new_from_slice(key).ok()?;
     let mut plain = cipher
         .decrypt(
-            Nonce::from_slice(nonce),
+            nonce,
             Payload { msg: sealed, aad: &aad },
         )
         .ok()?;

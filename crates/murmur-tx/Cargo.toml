@@ -8,24 +8,18 @@ crate-type = ["rlib"]
 
 [dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "sync", "time", "net", "io-util", "macros", "fs"] }
-quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-ring"] }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+quinn = { version = "0.11", default-features = false, features = ["runtime-tokio", "rustls-aws-lc-rs"] }
+rustls = { version = "0.23", default-features = false, features = ["aws_lc_rs", "std"] }
 x509-cert = "0.2.5"
 aws-lc-rs = "=1.18.2"
-sha2 = "0.10"
 serde = { version = "1", features = ["derive"] }
 postcard = { version = "1", features = ["alloc"] }
 thiserror = "2"
-rand = "0.8"
 zeroize = "1"
-ipnet = { version = "2", features = ["serde"] }
-zstd = "=0.13.3"
+ipnet = { version = "=2.12.2", features = ["serde"] }
 chacha20poly1305 = "=0.10.1"
-aes-gcm = "=0.10.3"
-hkdf = "=0.12.4"
-reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls"] }
-pem-rfc7468 = { version = "=0.7.0", features = ["alloc"] }
+reqwest = { version = "=0.12.28", default-features = false, features = ["rustls-tls-webpki-roots-no-provider"] }
 
 [dev-dependencies]
-rcgen = "=0.13.2"
+rcgen = { version = "=0.13.2", default-features = false, features = ["aws_lc_rs", "pem"] }
 tempfile = "3"

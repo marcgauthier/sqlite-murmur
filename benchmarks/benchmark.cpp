@@ -130,9 +130,9 @@ std::string textScalar(sqlite3 *db, const char *sql) {
         throw std::runtime_error(std::string("missing setting: ") + sql);
     return reinterpret_cast<const char *>(sqlite3_column_text(statement.get(), 0));
 }
-void persist(sqlite3 *db, const std::string &path, bool murmur, bool memory) {
+void persist(sqlite3 *db, const std::string &path, bool murmur) {
     if (murmur) check(sqlite_murmur_checkpoint(path.c_str()), db, "persist Murmur database");
-    else if (!memory) {
+    else {
         check(sqlite3_db_cacheflush(db), db, "flush SQLite cache");
         check(sqlite3_wal_checkpoint_v2(db, "main", SQLITE_CHECKPOINT_TRUNCATE, nullptr, nullptr),
               db, "checkpoint SQLite WAL");
@@ -164,7 +164,7 @@ Result run(Options options) {
     auto &[duration, flushInterval, cachePages, sqliteCacheKiB, pageSize, cipher,
            compression, compressionLevel, batchSize, backgroundThreads,
            replication, ingest, suite, backend] = options;
-    const bool murmur = backend == "murmur", memory = backend == "sqlite-memory";
+    const bool murmur = backend == "murmur";
     const std::string path = (std::filesystem::temp_directory_path() /
         ("sqlite-murmur-benchmark-" + std::to_string(Clock::now().time_since_epoch().count()))).string();
     struct Cleanup {
@@ -191,7 +191,7 @@ Result run(Options options) {
     uint64_t packedBytes = 0, appliedChanges = 0;
     sqlite_murmur_stats stats{};
     {
-        auto db = open(memory ? ":memory:" : path, sqliteCacheKiB, murmur);
+        auto db = open(path, sqliteCacheKiB, murmur);
         exec(db.get(), ("PRAGMA page_size=" + std::to_string(pageSize)).c_str());
         exec(db.get(), "PRAGMA mmap_size=0");
         if (murmur) {
@@ -206,8 +206,7 @@ Result run(Options options) {
                 scalar(db.get(), "PRAGMA flush_interval_ms") != flushInterval)
                 throw std::runtime_error("Murmur encryption/compression configuration did not take effect");
         } else {
-            exec(db.get(), memory ? "PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF"
-                                 : "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL");
+            exec(db.get(), "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL");
         }
         // Set the KiB target after page size selection for every backend.
         exec(db.get(), ("PRAGMA cache_size=-" + std::to_string(sqliteCacheKiB)).c_str());
@@ -215,8 +214,8 @@ Result run(Options options) {
         const auto synchronous = scalar(db.get(), "PRAGMA synchronous");
         if (scalar(db.get(), "PRAGMA page_size") != pageSize ||
             scalar(db.get(), "PRAGMA cache_size") != -static_cast<int64_t>(sqliteCacheKiB) ||
-            journal != (murmur ? "delete" : memory ? "memory" : "wal") ||
-            synchronous != (murmur ? 2 : memory ? 0 : 1))
+            journal != (murmur ? "delete" : "wal") ||
+            synchronous != (murmur ? 2 : 1))
             throw std::runtime_error("benchmark configuration did not take effect");
         if (!replication && scalar(db.get(), "SELECT count(*) FROM sqlite_schema WHERE name GLOB 'crsql*' OR name GLOB 'murmur_*'") != 0)
             throw std::runtime_error("storage benchmark unexpectedly initialized replication metadata");
@@ -228,7 +227,7 @@ Result run(Options options) {
         exec(db.get(), "BEGIN IMMEDIATE");
         for (uint64_t id = 1; id <= kSeedRows; ++id) insert.insert(id);
         exec(db.get(), "COMMIT");
-        persist(db.get(), path, murmur, memory);
+        persist(db.get(), path, murmur);
         Database source(nullptr);
         if (ingest != "local") {
             sqlite3 *raw = nullptr;
@@ -240,7 +239,7 @@ Result run(Options options) {
         std::cout << "BENCH_CONFIG,suite=" << suite << ",backend=" << backend
                   << ",encryption=" << (murmur ? "on" : "off")
                   << ",journal_mode=" << journal << ",synchronous=" << synchronous
-                  << ",persistence=" << (murmur ? "periodic_flush" : memory ? "volatile" : "wal_checkpoint")
+                  << ",persistence=" << (murmur ? "periodic_flush" : "wal_checkpoint")
                   << ",cipher=" << (murmur ? cipher : "none") << ",flush_interval_ms=" << (murmur ? std::to_string(flushInterval) : "NA")
                   << ",page_size=" << pageSize << ",sqlite_cache_size=" << -static_cast<int64_t>(sqliteCacheKiB)
                   << ",sqlite_cache_bytes=" << static_cast<uint64_t>(sqliteCacheKiB) * 1024
@@ -322,8 +321,8 @@ Result run(Options options) {
         }
         const auto stop = Clock::now();
         wallSeconds = std::chrono::duration<double>(stop - start).count();
-        persist(db.get(), path, murmur, memory);
-        persistenceSeconds = memory ? 0 : std::chrono::duration<double>(Clock::now() - stop).count();
+        persist(db.get(), path, murmur);
+        persistenceSeconds = std::chrono::duration<double>(Clock::now() - stop).count();
         if (replication) {
             const auto query = "SELECT count(*) FROM crsql_changes WHERE \"table\"='records' AND cid='body' AND db_version>" + std::to_string(seedVersion);
             trackedChanges = scalar(db.get(), query.c_str());
@@ -331,17 +330,16 @@ Result run(Options options) {
         }
         if (murmur) check(sqlite_murmur_get_stats(path.c_str(), &stats), db.get(), "read storage statistics");
         else stats.logical_size_bytes = scalar(db.get(), "PRAGMA page_count") * uint64_t(pageSize);
-        if (memory) verify(db.get(), kSeedRows + writes, replication);
     }
     uint64_t diskBytes = 0;
     if (murmur) {
         for (const auto &entry : std::filesystem::recursive_directory_iterator(path))
             if (entry.is_regular_file()) diskBytes += entry.file_size();
-    } else if (!memory) {
+    } else {
         for (const auto &suffix : {"", "-wal", "-shm", "-journal"})
             if (std::filesystem::exists(path + suffix)) diskBytes += std::filesystem::file_size(path + suffix);
     }
-    if (!memory) {
+    {
         auto db = open(path, sqliteCacheKiB, murmur);
         enableReplication(db, replication);
         verify(db.get(), kSeedRows + writes, replication);
@@ -373,19 +371,16 @@ void comparison(const std::vector<Result> &results, bool replication) {
     for (const auto &r : results)
         std::cout << "| " << r.backend << " | " << r.batchSize << " | " << r.throughput << " | "
                   << r.persistedThroughput << " | " << r.transactionMs << " | " << r.logicalBytes << " | " << r.diskBytes << " |\n";
-    std::cout << "| Inserts/tx | Murmur / SQLite disk ops/s | Murmur / SQLite memory ops/s | Murmur / disk incl. persistence | Murmur / memory incl. persistence |\n"
-              << "|---:|---:|---:|---:|---:|\n";
+    std::cout << "| Inserts/tx | Murmur / SQLite disk ops/s | Murmur / disk incl. persistence |\n"
+              << "|---:|---:|---:|\n";
     for (unsigned batch : {1u, 100u}) {
-        const Result *murmur = nullptr, *disk = nullptr, *memory = nullptr;
+        const Result *murmur = nullptr, *disk = nullptr;
         for (const auto &r : results) if (r.batchSize == batch) {
             if (r.backend == "murmur") murmur = &r;
             else if (r.backend == "sqlite-disk") disk = &r;
-            else memory = &r;
         }
         std::cout << "| " << batch << " | " << murmur->throughput / disk->throughput << "x | "
-                  << murmur->throughput / memory->throughput << "x | "
-                  << murmur->persistedThroughput / disk->persistedThroughput << "x | "
-                  << murmur->persistedThroughput / memory->persistedThroughput << "x |\n";
+                  << murmur->persistedThroughput / disk->persistedThroughput << "x |\n";
     }
 }
 } // namespace
@@ -414,7 +409,7 @@ int main(int argc, char **argv) {
             if (arg == "--help") {
                 std::cout << "Usage: benchmark [--suite=all|no-replication|crsqlite|single] [--seconds=60] [--flush-interval-ms=100] [--cache-pages=16384] [--sqlite-cache-kib=1048576]\n"
                           << "                 [--compression=zstd3|zstd1..zstd22] [--cipher=aegis256|aes256gcm] [--page-size=4096] [--batch-size=1] [--replication=off|on] [--ingest=local|row|blob] [--background-threads=auto|1..256]\n"
-                          << "Default: 12 cases, 60 seconds each. --suite=single supports --backend=murmur|sqlite-disk|sqlite-memory.\nBatch/replication/ingest/backend overrides require --suite=single; row/blob ingest enables replication; --seconds measures destination active time, excluding source export/packing.\n";
+                          << "Default: 8 cases, 60 seconds each. --suite=single supports --backend=murmur|sqlite-disk.\nBatch/replication/ingest/backend overrides require --suite=single; row/blob ingest enables replication; --seconds measures destination active time, excluding source export/packing.\n";
                 return 0;
             }
             if (arg.rfind("--suite=", 0) == 0) {
@@ -424,7 +419,7 @@ int main(int argc, char **argv) {
             } else if (arg.rfind("--backend=", 0) == 0) {
                 backendOverride = true;
                 backend = arg.substr(10);
-                if (backend != "murmur" && backend != "sqlite-disk" && backend != "sqlite-memory")
+                if (backend != "murmur" && backend != "sqlite-disk")
                     throw std::runtime_error("invalid backend");
             } else if (arg.rfind("--seconds=", 0) == 0) {
                 const auto value = arg.substr(10);
@@ -490,14 +485,14 @@ int main(int argc, char **argv) {
 
     try {
         std::cout << "Persistence: Murmur uses DELETE/FULL with " << flushInterval
-                  << " ms background persistence; SQLite disk uses WAL/NORMAL with a final checkpoint; memory is volatile.\n"
+                  << " ms background persistence; SQLite disk uses WAL/NORMAL with a final checkpoint.\n"
                   << "These policies have different commit durability guarantees. A 1x transaction times the insert; 100x includes interleaved reads.\n";
         if (suite == "single") run(options);
         else {
             for (bool replicated : {false, true}) {
                 if ((suite == "no-replication" && replicated) || (suite == "crsqlite" && !replicated)) continue;
                 std::vector<Result> results;
-                for (const auto *storage : {"murmur", "sqlite-disk", "sqlite-memory"}) {
+                for (const auto *storage : {"murmur", "sqlite-disk"}) {
                     for (unsigned batch : {1u, 100u}) {
                         auto current = options;
                         current.backend = storage;

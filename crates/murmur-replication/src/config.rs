@@ -1,6 +1,5 @@
 use crate::*;
 use rusqlite::Connection;
-use std::io::BufReader;
 
 #[derive(Clone)]
 pub(crate) struct Credentials {
@@ -494,14 +493,22 @@ pub(crate) fn validate(name: &str, value: &str) -> Result<()> {
 }
 fn certificates(path: &str) -> Result<Vec<Vec<u8>>> {
     let bytes = std::fs::read(path)?;
-    let certs = rustls_pemfile::certs(&mut BufReader::new(bytes.as_slice()))
-        .map(|r| r.map(|c| c.to_vec()))
+    let certs = <rustls::pki_types::CertificateDer as rustls::pki_types::pem::PemObject>::pem_slice_iter(&bytes)
+        .map(|r| r.map(|c| c.to_vec()).map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e)))
         .collect::<std::io::Result<Vec<_>>>()?;
     if certs.is_empty() {
         return Err(Error::Invalid("empty PEM certificate file".into()));
     }
     Ok(certs)
 }
+
+fn private_key(bytes: &[u8]) -> Result<rustls::pki_types::PrivateKeyDer<'static>> {
+    use rustls::pki_types::{PrivateKeyDer, pem::PemObject};
+    PrivateKeyDer::pem_slice_iter(bytes).next().transpose()
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?
+        .ok_or_else(|| Error::Invalid("missing PEM private key".into()))
+}
+
 impl Config {
     pub fn load(db: &Connection, site: NodeId) -> Result<Self> {
         let get = |s| setting(db, s);
@@ -514,8 +521,7 @@ impl Config {
         let node = transport::node_id(&chain[0])?;
         let roots = certificates(&get("ca")?)?;
         let bytes = zeroize::Zeroizing::new(std::fs::read(get("private_key")?)?);
-        let key = rustls_pemfile::private_key(&mut BufReader::new(bytes.as_slice()))?
-            .ok_or_else(|| Error::Invalid("missing PEM private key".into()))?;
+        let key = private_key(&bytes)?;
         let incarnation: i64 = db.query_row(
             "UPDATE murmur_identity SET incarnation=incarnation+1 WHERE id=1 RETURNING incarnation",
             [],
@@ -892,5 +898,40 @@ mod tests {
         assert!(validate("retention_max_offline_ms", "2592000001").is_err());
         let db = memdb();
         assert_eq!(setting(&db, "retention_min_kept").unwrap(), "1000");
+    }
+}
+
+#[cfg(test)]
+mod pem_compatibility_tests {
+    use super::*;
+    use rustls::pki_types::PrivateKeyDer;
+
+    #[test]
+    fn supported_key_labels_missing_keys_and_malformed_pem() {
+        // PEM decoding identifies the container; TLS validates the DER later.
+        for label in ["RSA PRIVATE KEY", "EC PRIVATE KEY", "PRIVATE KEY"] {
+            let pem = format!("-----BEGIN {label}-----\nAQID\n-----END {label}-----\n");
+            let key = private_key(pem.as_bytes()).unwrap();
+            assert_eq!(key.secret_der(), &[1, 2, 3]);
+            assert!(matches!((&key, label),
+                (PrivateKeyDer::Pkcs1(_), "RSA PRIVATE KEY") |
+                (PrivateKeyDer::Sec1(_), "EC PRIVATE KEY") |
+                (PrivateKeyDer::Pkcs8(_), "PRIVATE KEY")));
+        }
+        assert!(matches!(private_key(b""), Err(Error::Invalid(_))));
+        assert!(matches!(private_key(b"-----BEGIN CERTIFICATE-----\nAQID\n-----END CERTIFICATE-----"), Err(Error::Invalid(_))));
+        for malformed in [
+            "-----BEGIN PRIVATE KEY-----\n!!!!\n-----END PRIVATE KEY-----",
+            "-----BEGIN PRIVATE KEY-----\nAQID\n",
+        ] {
+            assert!(private_key(malformed.as_bytes()).is_err());
+        }
+        let cert = rcgen::CertificateParams::new(vec!["localhost".into()]).unwrap()
+            .self_signed(&rcgen::KeyPair::generate().unwrap()).unwrap();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), format!("{}{}", cert.pem(), cert.pem())).unwrap();
+        assert_eq!(certificates(file.path().to_str().unwrap()).unwrap(), vec![cert.der().to_vec(); 2]);
+        std::fs::write(file.path(), b"").unwrap();
+        assert!(certificates(file.path().to_str().unwrap()).is_err());
     }
 }
