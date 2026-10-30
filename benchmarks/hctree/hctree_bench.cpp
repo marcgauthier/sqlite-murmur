@@ -76,11 +76,16 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
   std::string log;if(replication)log.reserve(batch*128);
   for(unsigned i=0;i<batch;++i){
    auto id=SEED+(++writes);ins.insert(id);if(replication)loginsert(log,id);
-   if(batch==1&&!replication)txDuration+=std::chrono::duration<double>(Clock::now()-txstart).count();
+   // In the 1x case commit and time the insert *before* the four reads,
+   // identical to the sqlite-murmur benchmark's transaction boundary.
+   if(batch==1){
+    if(replication)j.commit(d,log);
+    txDuration+=std::chrono::duration<double>(Clock::now()-txstart).count();
+   }
    for(int k=0;k<4;++k)sel.read(randomid(rng,SEED+writes));
   }
-  if(replication){j.commit(d,log);if(batch==1)txDuration+=std::chrono::duration<double>(Clock::now()-txstart).count();}
-  else if(batch>1)sql(d,"COMMIT");
+  if(replication&&batch>1)j.commit(d,log);
+  else if(!replication&&batch>1)sql(d,"COMMIT");
   if(batch>1)txDuration+=std::chrono::duration<double>(Clock::now()-txstart).count();
   ++transactions;
  }while(std::chrono::duration<double>(Clock::now()-start).count()<duration);
