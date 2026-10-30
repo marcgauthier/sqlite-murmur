@@ -31,11 +31,11 @@ cmake -S "$ROOT" -B "$ROOT/build-hctree-comparison" -DCMAKE_BUILD_TYPE=Release \
   -DSQLITE_MURMUR_BUILD_TESTS=OFF -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON \
   -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
 cmake --build "$ROOT/build-hctree-comparison" --target benchmark --parallel 2
-# Murmur replication enabled in regular backend; HCTree standalone is storage-only
-# and MUST NOT be interpreted as HCTree + Murmur replication.
+# Murmur is measured with change tracking off and on. HCTree is storage-only;
+# the on cases are not HCTree+Murmur integration.
 # HCTree native leader/follower replication is never enabled.
 for batch in 1 100; do
- for repl in on; do
+ for repl in off on; do
   key="$repl-$batch"
   echo "RUN murmur $key"
   "$ROOT/build-hctree-comparison/benchmark" --suite=single --backend=murmur --seconds="$DURATION" --batch-size="$batch" --replication="$repl" | tee "$OUT/murmur-$key.txt"
