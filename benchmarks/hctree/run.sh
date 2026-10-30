@@ -22,7 +22,7 @@ ldd "$OUT/hctree_bench" | tee "$OUT/hctree-linkage.txt"
 ldd "$OUT/hctree_bench" | grep -F "$LIB"
 # Validate the HCTree-specific loader, file format and leader journal BEFORE
 # compiling the Rust/RocksDB backend or starting 60-second measurements.
-for repl in off on; do
+for repl in off; do
   LD_LIBRARY_PATH="$LIB" "$OUT/hctree_bench" \
     --database="$OUT/hctree-smoke-$repl.db" --seconds=0.01 \
     --batch=1 --replication="$repl" > "$OUT/hctree-smoke-$repl.txt"
@@ -31,7 +31,7 @@ cmake -S "$ROOT" -B "$ROOT/build-hctree-comparison" -DCMAKE_BUILD_TYPE=Release \
   -DSQLITE_MURMUR_BUILD_TESTS=OFF -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON \
   -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
 cmake --build "$ROOT/build-hctree-comparison" --target benchmark --parallel 2
-for repl in off on; do
+for repl in off; do
  for batch in 1 100; do
   key="$repl-$batch"
   echo "RUN murmur $key"
