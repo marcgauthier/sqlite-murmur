@@ -3,6 +3,8 @@ name: SQLite Murmur benchmark
 on:
   workflow_dispatch:
   push:
+    branches-ignore:
+      - benchmark/hctree-compare
     paths:
       - 'benchmarks/**'
       - 'src/**'
