@@ -117,7 +117,11 @@ uint64_t randomID(uint64_t &state, uint64_t rows) {
 }
 int64_t scalar(sqlite3 *db, const char *sql) {
     Statement statement(db, sql);
-    if (sqlite3_step(statement.get()) != SQLITE_ROW) throw std::runtime_error(sqlite3_errmsg(db));
+    const int rc = sqlite3_step(statement.get());
+    if (rc != SQLITE_ROW)
+        throw std::runtime_error(std::string("scalar query '") + sql +
+            "' returned " + std::to_string(rc) + " (" + sqlite3_errstr(rc) +
+            "): " + sqlite3_errmsg(db));
     return sqlite3_column_int64(statement.get(), 0);
 }
 void verify(sqlite3 *db, uint64_t rows, bool replication) {
