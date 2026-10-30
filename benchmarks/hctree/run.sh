@@ -20,7 +20,7 @@ g++ -std=c++17 -O3 -Wall -Wextra -pedantic -I"$OUT/hctree-src" \
   -lsqlite3 -ldl -lpthread -o "$OUT/hctree_bench"
 ldd "$OUT/hctree_bench" | tee "$OUT/hctree-linkage.txt"
 ldd "$OUT/hctree_bench" | grep -F "$LIB"
-# Validate the HCTree-specific loader, file format and leader journal BEFORE
+# Validate the HCTree-specific loader and file format BEFORE
 # compiling the Rust/RocksDB backend or starting 60-second measurements.
 for repl in off; do
   LD_LIBRARY_PATH="$LIB" "$OUT/hctree_bench" \
@@ -31,13 +31,15 @@ cmake -S "$ROOT" -B "$ROOT/build-hctree-comparison" -DCMAKE_BUILD_TYPE=Release \
   -DSQLITE_MURMUR_BUILD_TESTS=OFF -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON \
   -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON
 cmake --build "$ROOT/build-hctree-comparison" --target benchmark --parallel 2
-for repl in off; do
- for batch in 1 100; do
+# Four Murmur cases (change tracking off/on), two HCTree storage-only cases.
+# HCTree native leader/follower replication is never enabled.
+for batch in 1 100; do
+ for repl in off on; do
   key="$repl-$batch"
   echo "RUN murmur $key"
   "$ROOT/build-hctree-comparison/benchmark" --suite=single --backend=murmur --seconds="$DURATION" --batch-size="$batch" --replication="$repl" | tee "$OUT/murmur-$key.txt"
-  echo "RUN hctree $key"
-  LD_LIBRARY_PATH="$LIB" "$OUT/hctree_bench" --database="$OUT/hctree-$key.db" --seconds="$DURATION" --batch="$batch" --replication="$repl" | tee "$OUT/hctree-$key.txt"
  done
+ echo "RUN hctree off-$batch"
+ LD_LIBRARY_PATH="$LIB" "$OUT/hctree_bench" --database="$OUT/hctree-off-$batch.db" --seconds="$DURATION" --batch="$batch" --replication=off | tee "$OUT/hctree-off-$batch.txt"
 done
 python3 "$ROOT/benchmarks/hctree/report.py" "$OUT"
