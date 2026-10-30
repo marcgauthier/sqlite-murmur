@@ -63,7 +63,7 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
    if(replication)j.commit(d,log);else sql(d,"COMMIT");
   }
  }
- {std::ifstream f(dbpath,std::ios::binary);char magic[6]={};f.read(magic,6);if(f.gcount()!=6||memcmp(magic,"hctree",6))throw std::runtime_error("opened stock SQLite instead of HCTree");}
+ {std::ifstream f(dbpath,std::ios::binary);char magic[16]={};f.read(magic,16);if(f.gcount()!=16)throw std::runtime_error("database header too short");std::cerr<<"HCTREE_HEADER_HEX,";for(unsigned char c:magic){const char *hex="0123456789abcdef";std::cerr<<hex[c>>4]<<hex[c&15];}std::cerr<<"\\n";if(std::memcmp(magic,"SQLite format 3",15)==0)throw std::runtime_error("stock SQLite file format detected");}
  if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED))throw std::runtime_error("seed count wrong");
  unsigned long long writes=0,transactions=0,rng=1234*0x9e3779b97f4a7c15ULL;
  double txDuration=0,elapsed=0;
