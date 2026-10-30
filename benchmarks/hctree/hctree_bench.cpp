@@ -57,9 +57,9 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
   sql(d,DDL);
   ck(d,j.init(d),"initialize HCTree journal");
   std::cerr<<"HCTREE_MODE_BEFORE,"<<j.getmode(d)<<"\\n";
-  ck(d,j.mode(d,1),"HCTree leader mode");
+  ck(d,j.mode(d,2),"HCTree leader mode");
   std::cerr<<"HCTREE_MODE_AFTER,"<<j.getmode(d)<<"\\n";
-  if(j.getmode(d)!=1)throw std::runtime_error("HCTree did not enter LEADER mode");
+  if(j.getmode(d)!=2)throw std::runtime_error("HCTree did not enter LEADER mode");
  }else sql(d,DDL);
  {
   Statement ins(d,"INSERT INTO records(id,body) VALUES(?1,?2)");
