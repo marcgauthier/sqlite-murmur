@@ -1,7 +1,6 @@
 // Local mixed-workload benchmark for the official SQLite HC-tree branch.
-// "replication=on" means native leader-journal creation, not wire replication.
+// HCTree native replication is deliberately disabled: Murmur owns replication.
 #include <sqlite3.h>
-#include <dlfcn.h>
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -25,24 +24,14 @@ struct Statement{sqlite3*d;sqlite3_stmt*s=nullptr;
 };
 long long scalar(sqlite3*d,const char*q){Statement s(d,q);if(sqlite3_step(s.s)!=SQLITE_ROW)throw std::runtime_error(sqlite3_errmsg(d));return sqlite3_column_int64(s.s,0);}
 unsigned long long randomid(unsigned long long&x,unsigned long long n){x^=x>>12;x^=x<<25;x^=x>>27;return 1+(x*2685821657736338717ULL)%n;}
-using Init=int(*)(sqlite3*);using Mode=int(*)(sqlite3*,int);using GetMode=int(*)(sqlite3*);
-using Leader=int(*)(sqlite3*,const unsigned char*,int,sqlite3_int64*,sqlite3_int64*);
-struct Journal {
- Init init=(Init)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_init");
- Mode mode=(Mode)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_setmode");
- GetMode getmode=(GetMode)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_mode");
- Leader leader=(Leader)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_leader_commit");
- void commit(sqlite3*d,const std::string&q){sqlite3_int64 cid=0,snap=0;ck(d,leader(d,(const unsigned char*)q.data(),int(q.size()),&cid,&snap),"hctree leader commit");if(cid<1)throw std::runtime_error("invalid HCTree CID");}
-};
-void loginsert(std::string&txt,unsigned long long id){txt+="INSERT INTO records(id,body) VALUES("+std::to_string(id)+",'"+BODY+"');";}
 int main(int argc,char**argv){sqlite3*d=nullptr;try{
- std::string path;unsigned batch=1;double duration=60;bool replication=false;
+ std::string path;unsigned batch=1;double duration=60;
  for(int i=1;i<argc;++i){std::string a=argv[i];
   if(a.rfind("--database=",0)==0)path=a.substr(11);
   else if(a.rfind("--batch=",0)==0)batch=unsigned(std::stoul(a.substr(8)));
   else if(a.rfind("--seconds=",0)==0)duration=std::stod(a.substr(10));
-  else if(a=="--replication=on")replication=true;
-  else if(a=="--replication=off")replication=false;
+  else if(a=="--replication=off"){} // Only storage-only HCTree is supported.
+  else if(a=="--replication=on")throw std::runtime_error("HCTree native replication disabled; use Murmur for replication");
   else throw std::runtime_error("bad argument "+a);
  }
  if(path.empty()||(batch!=1&&batch!=100)||!(duration>0&&duration<=3600))throw std::runtime_error("invalid options");
@@ -51,22 +40,13 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
  std::string uri="file:"+dbpath.string()+"?hctree=1";
  ck(d,sqlite3_open_v2(uri.c_str(),&d,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_URI|SQLITE_OPEN_FULLMUTEX,nullptr),"open");
  sql(d,"PRAGMA page_size=4096");sql(d,"PRAGMA cache_size=-1048576");sql(d,"PRAGMA mmap_size=0");
- Journal j;if(!j.init||!j.mode||!j.getmode||!j.leader)throw std::runtime_error("HCTree journal symbols not present");
- if(false && replication){
-  // Bootstrap schema and journal in NORMAL mode. Only then transition to LEADER.
-  sql(d,DDL);
-  ck(d,j.init(d),"initialize HCTree journal");
-  std::cerr<<"HCTREE_MODE_BEFORE,"<<j.getmode(d)<<"\\n";
-  ck(d,j.mode(d,2),"HCTree leader mode");
-  std::cerr<<"HCTREE_MODE_AFTER,"<<j.getmode(d)<<"\\n";
-  if(j.getmode(d)!=2)throw std::runtime_error("HCTree did not enter LEADER mode");
- }else sql(d,DDL);
+ sql(d,DDL);
  {
   Statement ins(d,"INSERT INTO records(id,body) VALUES(?1,?2)");
   for(unsigned long long first=1;first<=SEED;first+=1000){
-   sql(d,"BEGIN");std::string log;log.reserve(128000);
-   for(auto id=first;id<first+1000&&id<=SEED;++id){ins.insert(id);if(false && replication)loginsert(log,id);}
-   if(false && replication)j.commit(d,log);else sql(d,"COMMIT");
+   sql(d,"BEGIN");
+   for(auto id=first;id<first+1000&&id<=SEED;++id){ins.insert(id);}
+   sql(d,"COMMIT");
   }
  }
  {std::ifstream f(dbpath,std::ios::binary);char magic[16]={};f.read(magic,16);if(f.gcount()!=16)throw std::runtime_error("database header too short");std::cerr<<"HCTREE_HEADER_HEX,";for(unsigned char c:magic){const char *hex="0123456789abcdef";std::cerr<<hex[c>>4]<<hex[c&15];}std::cerr<<"\\n";if(std::memcmp(magic,"SQLite format 3",15)==0)throw std::runtime_error("stock SQLite file format detected");}
@@ -79,19 +59,16 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
  auto start=Clock::now();
  do{
   auto txstart=Clock::now();if(batch>1)sql(d,"BEGIN");
-  std::string log;if(replication)log.reserve(batch*128);
   for(unsigned i=0;i<batch;++i){
-   auto id=SEED+(++writes);ins.insert(id);if(replication)loginsert(log,id);
+   auto id=SEED+(++writes);ins.insert(id);
    // In the 1x case commit and time the insert *before* the four reads,
    // identical to the sqlite-murmur benchmark's transaction boundary.
    if(batch==1){
-    if(false && replication)j.commit(d,log);
     txDuration+=std::chrono::duration<double>(Clock::now()-txstart).count();
    }
    for(int k=0;k<4;++k)sel.read(randomid(rng,SEED+writes));
   }
-  if(false && replication&&batch>1)j.commit(d,log);
-  else if(!replication&&batch>1)sql(d,"COMMIT");
+  if(batch>1)sql(d,"COMMIT");
   if(batch>1)txDuration+=std::chrono::duration<double>(Clock::now()-txstart).count();
   ++transactions;
  }while(std::chrono::duration<double>(Clock::now()-start).count()<duration);
@@ -99,12 +76,10 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
  }
  if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED+writes))throw std::runtime_error("row count wrong");
  auto journalRows=0LL;
- if(false && replication&&journalRows<static_cast<long long>(transactions))throw std::runtime_error("HCTree journal row count wrong");
  auto closing=Clock::now();ck(d,sqlite3_close(d),"close");d=nullptr;
  auto closeSeconds=std::chrono::duration<double>(Clock::now()-closing).count();
  ck(d,sqlite3_open_v2(uri.c_str(),&d,SQLITE_OPEN_READWRITE|SQLITE_OPEN_URI,nullptr),"reopen");
  if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED+writes))throw std::runtime_error("reopen row count wrong");
- if(false && replication&&scalar(d,"SELECT count(*) FROM hct_journal")!=journalRows)throw std::runtime_error("reopen journal mismatch");
  ck(d,sqlite3_close(d),"reclose");d=nullptr;
  unsigned long long diskbytes=0;
  for(const char*ext:{"","-pagemap","-journal","-wal","-shm"}){auto name=dbpath.string()+ext;if(std::filesystem::exists(name))diskbytes+=std::filesystem::file_size(name);}
