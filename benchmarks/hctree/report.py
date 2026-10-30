@@ -7,8 +7,11 @@ out = pathlib.Path(sys.argv[1])
 rows = []
 
 
-def murmur_result(replication, batch):
-    text = (out / f"murmur-{replication}-{batch}.txt").read_text()
+def murmur_result(replication, batch, prefix="murmur"):
+    text = (out / f"{prefix}-{replication}-{batch}.txt").read_text()
+    engine = "hctree" if prefix == "integrated-hctree" else "standard"
+    if f"BENCH_ENGINE,{engine}" not in text:
+        raise ValueError(f"Missing verified {engine} engine marker in {prefix}-{replication}-{batch}")
     header = next(csv.reader([next(line for line in text.splitlines()
                                    if line.startswith("BENCH_HEADER,"))]))[1:]
     values = next(csv.reader([next(line for line in text.splitlines()
@@ -50,9 +53,22 @@ for batch in (1, 100):
             print(f"BENCH_REFERENCE,murmur-with-crsqlite-vs-hctree-storage-only,{batch},"
                   f"{murmur_ops:.2f},{hctree_ops:.2f},{murmur_ops/hctree_ops:.3f}")
 
+# HC-tree is now also tested inside Murmur's RocksDB VFS, with exactly
+# the same change-tracking modes as the regular SQLite engine.
+for batch in (1, 100):
+    for repl in ("off", "on"):
+        baseline = murmur_result(repl, batch)
+        integrated = murmur_result(repl, batch, "integrated-hctree")
+        a = float(baseline["ops_per_second"])
+        b = float(integrated["ops_per_second"])
+        rows.append((repl, batch, "murmur+hctree", b, integrated["writes"],
+                     integrated["mean_write_transaction_ms"], integrated["tracked_changes"],
+                     "HC-tree engine in Murmur; CRR tracking " + repl))
+        print(f"BENCH_INTEGRATED_PAIR,{repl},{batch},{a:.2f},{b:.2f},{b/a:.3f}")
+
 with (out / "summary.csv").open("w", newline="") as f:
     w = csv.writer(f)
     w.writerow(["replication", "batch_size", "backend", "ops_per_second", "writes",
                 "mean_transaction_ms", "tracked_changes", "measurement_scope"])
     w.writerows(rows)
-print("BENCHMARK_COMPLETE,6_cases,HCTree_storage_only")
+print("BENCHMARK_COMPLETE,10_cases,HCTree_native_replication_disabled")

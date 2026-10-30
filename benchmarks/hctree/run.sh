@@ -43,16 +43,22 @@ for batch in 1 100; do
  echo "RUN hctree off-$batch"
  LD_LIBRARY_PATH="$LIB" "$OUT/hctree_bench" --database="$OUT/hctree-off-$batch.db" --seconds="$DURATION" --batch="$batch" --replication=off | tee "$OUT/hctree-off-$batch.txt"
 done
-# Integrated comparison: both binaries execute the SAME Murmur benchmark with
-# Murmur change tracking enabled. The HC-tree build replaces SQLite inside Murmur.
+# Integrated comparison: identical Murmur+RocksDB+CRR workloads, changing
+# only the SQLite engine. HC-tree native leader/follower journal stays disabled.
 cmake -S "$ROOT" -B "$ROOT/build-hctree-integrated" -DCMAKE_BUILD_TYPE=Release \
   -DSQLITE_MURMUR_BUILD_TESTS=OFF -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON \
   -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON \
   -DSQLITE_MURMUR_SQLITE_ENGINE=hctree \
   -DSQLITE_MURMUR_HCTREE_SOURCE_DIR="$OUT/hctree-src"
 cmake --build "$ROOT/build-hctree-integrated" --target benchmark --parallel 2
-for batch in 1 100; do
-  "$ROOT/build-hctree-comparison/benchmark" --suite=single --backend=murmur --seconds="$DURATION" --batch-size="$batch" --replication=on | tee "$OUT/integrated-standard-$batch.txt"
-  "$ROOT/build-hctree-integrated/benchmark" --suite=single --backend=murmur --seconds="$DURATION" --batch-size="$batch" --replication=on | tee "$OUT/integrated-hctree-$batch.txt"
+# Fail quickly if the HC-tree URI, file format, or cr-sqlite integration fails.
+for repl in off on; do
+ "$ROOT/build-hctree-integrated/benchmark" --suite=single --backend=murmur --seconds=0.01 --batch-size=1 --replication="$repl" > "$OUT/integrated-smoke-$repl.txt"
 done
-
+for repl in off on; do
+ for batch in 1 100; do
+  echo "RUN integrated-hctree $repl-$batch"
+  "$ROOT/build-hctree-integrated/benchmark" --suite=single --backend=murmur --seconds="$DURATION" --batch-size="$batch" --replication="$repl" | tee "$OUT/integrated-hctree-$repl-$batch.txt"
+ done
+done
+python3 "$ROOT/benchmarks/hctree/report.py" "$OUT"

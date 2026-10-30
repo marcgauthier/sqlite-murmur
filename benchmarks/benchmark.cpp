@@ -56,9 +56,16 @@ Database open(const std::string &path, unsigned sqliteCacheKiB, bool murmur) {
     // This benchmark is a consumer of the same public API as applications.
     // Storage-only opens never initialize replication metadata or start QUIC.
     sqlite_murmur_open_options options{SQLITE_MURMUR_OPEN_STORAGE_ONLY, nullptr, nullptr};
-    const int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
-    const int rc = murmur ? sqlite_murmur_open_v2(path.c_str(), &raw, flags, &options)
-                          : sqlite3_open_v2(path.c_str(), &raw, flags, nullptr);
+    int flags = SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX;
+    std::string filename = path;
+#ifdef SQLITE_MURMUR_HCTREE_ENGINE
+    // HC-tree is opt-in per connection. Compiling the HC-tree amalgamation alone
+    // does not select its storage format.
+    filename = "file:" + path + "?hctree=1";
+    flags |= SQLITE_OPEN_URI;
+#endif
+    const int rc = murmur ? sqlite_murmur_open_v2(filename.c_str(), &raw, flags, &options)
+                          : sqlite3_open_v2(filename.c_str(), &raw, flags, nullptr);
     Database db(raw, CloseDatabase{false, murmur});
     check(rc, db.get(), "open database");
     const auto cachePragma = "PRAGMA cache_size=-" + std::to_string(sqliteCacheKiB);
@@ -228,6 +235,24 @@ Result run(Options options) {
         for (uint64_t id = 1; id <= kSeedRows; ++id) insert.insert(id);
         exec(db.get(), "COMMIT");
         persist(db.get(), path, murmur);
+#ifdef SQLITE_MURMUR_HCTREE_ENGINE
+        // Verify the actual HC-tree file signature through Murmur's VFS,
+        // rather than accidentally benchmarking the stock SQLite btree.
+        sqlite3_file *mainFile = nullptr;
+        check(sqlite3_file_control(db.get(), "main", SQLITE_FCNTL_FILE_POINTER, &mainFile),
+              db.get(), "get HC-tree main file");
+        if (!mainFile || !mainFile->pMethods || !mainFile->pMethods->xRead)
+            throw std::runtime_error("HC-tree main file unavailable");
+        char magic[16]{};
+        check(mainFile->pMethods->xRead(mainFile, magic, sizeof(magic), 0),
+              db.get(), "read HC-tree file signature");
+        if (std::memcmp(magic, "HCtree database ", 16) != 0)
+            throw std::runtime_error("HC-tree engine built but database is not HC-tree format");
+        std::cout << "BENCH_ENGINE,hctree\\n";
+#else
+        std::cout << "BENCH_ENGINE,standard\\n";
+#endif
+
         Database source(nullptr);
         if (ingest != "local") {
             sqlite3 *raw = nullptr;
