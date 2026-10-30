@@ -64,7 +64,7 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
   }
  }
  {std::ifstream f(dbpath,std::ios::binary);char magic[6]={};f.read(magic,6);if(f.gcount()!=6||memcmp(magic,"hctree",6))throw std::runtime_error("opened stock SQLite instead of HCTree");}
- if(scalar(d,"SELECT count(*) FROM records")!=long long(SEED))throw std::runtime_error("seed count wrong");
+ if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED))throw std::runtime_error("seed count wrong");
  unsigned long long writes=0,transactions=0,rng=1234*0x9e3779b97f4a7c15ULL;
  double txDuration=0,elapsed=0;
  {
@@ -86,13 +86,13 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
  }while(std::chrono::duration<double>(Clock::now()-start).count()<duration);
  elapsed=std::chrono::duration<double>(Clock::now()-start).count();
  }
- if(scalar(d,"SELECT count(*) FROM records")!=long long(SEED+writes))throw std::runtime_error("row count wrong");
+ if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED+writes))throw std::runtime_error("row count wrong");
  auto journalRows=replication?scalar(d,"SELECT count(*) FROM hct_journal"):0;
- if(replication&&journalRows<long long(transactions))throw std::runtime_error("HCTree journal row count wrong");
+ if(replication&&journalRows<static_cast<long long>(transactions))throw std::runtime_error("HCTree journal row count wrong");
  auto closing=Clock::now();ck(d,sqlite3_close(d),"close");d=nullptr;
  auto closeSeconds=std::chrono::duration<double>(Clock::now()-closing).count();
  ck(d,sqlite3_open_v2(uri.c_str(),&d,SQLITE_OPEN_READWRITE|SQLITE_OPEN_URI,nullptr),"reopen");
- if(scalar(d,"SELECT count(*) FROM records")!=long long(SEED+writes))throw std::runtime_error("reopen row count wrong");
+ if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED+writes))throw std::runtime_error("reopen row count wrong");
  if(replication&&scalar(d,"SELECT count(*) FROM hct_journal")!=journalRows)throw std::runtime_error("reopen journal mismatch");
  ck(d,sqlite3_close(d),"reclose");d=nullptr;
  unsigned long long diskbytes=0;
