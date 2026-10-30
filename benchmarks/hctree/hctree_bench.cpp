@@ -25,11 +25,12 @@ struct Statement{sqlite3*d;sqlite3_stmt*s=nullptr;
 };
 long long scalar(sqlite3*d,const char*q){Statement s(d,q);if(sqlite3_step(s.s)!=SQLITE_ROW)throw std::runtime_error(sqlite3_errmsg(d));return sqlite3_column_int64(s.s,0);}
 unsigned long long randomid(unsigned long long&x,unsigned long long n){x^=x>>12;x^=x<<25;x^=x>>27;return 1+(x*2685821657736338717ULL)%n;}
-using Init=int(*)(sqlite3*);using Mode=int(*)(sqlite3*,int);
+using Init=int(*)(sqlite3*);using Mode=int(*)(sqlite3*,int);using GetMode=int(*)(sqlite3*);
 using Leader=int(*)(sqlite3*,const unsigned char*,int,sqlite3_int64*,sqlite3_int64*);
 struct Journal {
  Init init=(Init)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_init");
  Mode mode=(Mode)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_setmode");
+ GetMode getmode=(GetMode)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_mode");
  Leader leader=(Leader)dlsym(RTLD_DEFAULT,"sqlite3_hct_journal_leader_commit");
  void commit(sqlite3*d,const std::string&q){sqlite3_int64 cid=0,snap=0;ck(d,leader(d,(const unsigned char*)q.data(),int(q.size()),&cid,&snap),"hctree leader commit");if(cid<1)throw std::runtime_error("invalid HCTree CID");}
 };
@@ -50,10 +51,15 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
  std::string uri="file:"+dbpath.string()+"?hctree=1";
  ck(d,sqlite3_open_v2(uri.c_str(),&d,SQLITE_OPEN_READWRITE|SQLITE_OPEN_CREATE|SQLITE_OPEN_URI|SQLITE_OPEN_FULLMUTEX,nullptr),"open");
  sql(d,"PRAGMA page_size=4096");sql(d,"PRAGMA cache_size=-1048576");sql(d,"PRAGMA mmap_size=0");
- Journal j;if(!j.init||!j.mode||!j.leader)throw std::runtime_error("HCTree journal symbols not present");
+ Journal j;if(!j.init||!j.mode||!j.getmode||!j.leader)throw std::runtime_error("HCTree journal symbols not present");
  if(replication){
-  ck(d,j.init(d),"initialize HCTree journal");ck(d,j.mode(d,1),"HCTree leader mode");
-  sql(d,"BEGIN");sql(d,DDL);j.commit(d,DDL+";");
+  // Bootstrap schema and journal in NORMAL mode. Only then transition to LEADER.
+  sql(d,DDL);
+  ck(d,j.init(d),"initialize HCTree journal");
+  std::cerr<<"HCTREE_MODE_BEFORE,"<<j.getmode(d)<<"\\n";
+  ck(d,j.mode(d,1),"HCTree leader mode");
+  std::cerr<<"HCTREE_MODE_AFTER,"<<j.getmode(d)<<"\\n";
+  if(j.getmode(d)!=1)throw std::runtime_error("HCTree did not enter LEADER mode");
  }else sql(d,DDL);
  {
   Statement ins(d,"INSERT INTO records(id,body) VALUES(?1,?2)");
