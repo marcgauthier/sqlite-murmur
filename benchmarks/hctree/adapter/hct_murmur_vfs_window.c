@@ -212,7 +212,12 @@ int hct_vfs_window_flush_detected(HctVfsWindow *w) {
 int hct_vfs_window_close(HctVfsWindow *w) {
   int rc;
   if (!w) return SQLITE_MISUSE;
-  rc = hct_vfs_window_flush(w);
+  /* HC-tree modifies mapped page-map slots through pointers and CAS.
+   * A close that only flushes explicitly marked spans silently discards
+   * those edits. Detect all pointer writes before releasing the window.
+   * This still does not provide MAP_SHARED or transaction atomicity. */
+  rc = w->writable ? hct_vfs_window_flush_detected(w)
+                   : hct_vfs_window_flush(w);
   if (rc == SQLITE_OK) hct_vfs_window_discard(w);
   return rc;
 }

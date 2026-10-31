@@ -179,6 +179,29 @@ int main() {
     autoLeft = nullptr;
     if (hct_vfs_window_flush_detected(nullptr) != SQLITE_MISUSE)
       throw std::runtime_error("auto-diff accepted null window");
+    // HC-tree's page-map CAS updates do not call dirty(). Closing a
+    // writable pointer window must not silently discard those changes.
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &window),
+       "open implicit-diff close window");
+    mapped = static_cast<char *>(hct_vfs_window_data(window));
+    mapped[705] = 'P';
+    ck(hct_vfs_window_close(window), "close implicitly dirty window");
+    window = nullptr;
+    // A stale overlapping pointer edit must also conflict at close, and
+    // leave the failed window alive so it can be explicitly discarded.
+    HctVfsWindow *closeWinner = nullptr, *closeStale = nullptr;
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &closeWinner),
+       "open implicit-close winner");
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &closeStale),
+       "open implicit-close stale window");
+    static_cast<char *>(hct_vfs_window_data(closeWinner))[706] = 'W';
+    static_cast<char *>(hct_vfs_window_data(closeStale))[706] = 'S';
+    ck(hct_vfs_window_close(closeWinner), "close implicit-close winner");
+    closeWinner = nullptr;
+    if (hct_vfs_window_close(closeStale) != SQLITE_BUSY_SNAPSHOT)
+      throw std::runtime_error("implicit close failed to detect stale pointer write");
+    hct_vfs_window_discard(closeStale);
+    closeStale = nullptr;
     ck(hct_vfs_commit(a), "commit auto-diff writes");
 
     // A window opened before truncate/growth must not resurrect bytes or
@@ -261,7 +284,7 @@ int main() {
     if (page[20] != 'L' || page[21] != 'R')
       throw std::runtime_error("overlapping first-page windows lost writes");
     if (page[700] != 'M' || page[701] != 'Q' || page[702] != 'N' ||
-        page[704] != 'T')
+        page[704] != 'T' || page[705] != 'P' || page[706] != 'W')
       throw std::runtime_error("auto-diff pointer edits missing after cold reopen");
     if (page[64] != 'A' || page[65] != 'C')
       throw std::runtime_error("stale same-byte conflict or repeat flush corrupted data");

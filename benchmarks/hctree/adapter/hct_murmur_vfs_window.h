@@ -25,7 +25,9 @@ int hct_vfs_window_flush(HctVfsWindow *window);
  * provide MAP_SHARED coherence or atomic main+pagemap commits. Callers must
  * serialize writes through the pointer and call this before closing. */
 int hct_vfs_window_flush_detected(HctVfsWindow *window);
-/* Flushes pending writes. On failure the window remains live for retry. */
+/* Flushes explicit dirty spans AND unmarked pointer edits for writable
+ * windows. On failure the window remains live for retry or discard.
+ * This is NOT a transaction commit or a shared mapping. */
 int hct_vfs_window_close(HctVfsWindow *window);
 /* Discards unflushed writes, for explicit rollback/error cleanup. */
 void hct_vfs_window_discard(HctVfsWindow *window);

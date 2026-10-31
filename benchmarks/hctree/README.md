@@ -169,6 +169,12 @@ prototype**, closer to HC-tree's direct page-map pointer stores. Integration
 tests exercise overlapping pointer edits, same-byte conflicts, repeat flushes,
 and cold RocksDB reopening.
 
+Writable window close now detects and flushes pointer edits even without
+an explicit dirty-range notification. A regression test checks both durable
+implicit-close writes and stale same-byte conflicts. Failed closes leave the
+window available for explicit discard. This is a copy-backed bridge fix,
+not HC-tree source integration.
+
 **Not integrated HC-tree:** These windows are still not POSIX `MAP_SHARED`.
 They do not automatically propagate writes between concurrent mappings, flush
 at HC-tree transaction boundaries, provide cross-process coordination, or
