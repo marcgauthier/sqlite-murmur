@@ -1,3 +1,4 @@
+#define _POSIX_C_SOURCE 200809L
 #include "hct_murmur_vfs_io.h"
 #include "sqlite_murmur.h"
 #include <limits.h>
