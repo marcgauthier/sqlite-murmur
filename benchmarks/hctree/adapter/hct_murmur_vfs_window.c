@@ -13,6 +13,7 @@ struct HctVfsWindow {
   HctVfsFile *file;
   int64_t offset;
   size_t bytes;
+  int64_t original_size; /* Detect resize since the window snapshot. */
   unsigned char *data;
   unsigned char *baseline; /* Snapshot for sequential conflict detection. */
   HctDirtySpan *dirty;
@@ -45,6 +46,11 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
   w->offset = offset;
   w->bytes = bytes;
   w->writable = writable;
+  rc = hct_vfs_size(file, &w->original_size);
+  if (rc != SQLITE_OK) {
+    hct_vfs_window_discard(w);
+    return rc;
+  }
   w->data = sqlite3_malloc64(bytes);
   if (!w->data) {
     hct_vfs_window_discard(w);
@@ -100,7 +106,16 @@ int hct_vfs_window_flush(HctVfsWindow *w) {
   unsigned char current[4096];
   int rc;
   if (!w) return SQLITE_MISUSE;
-  if (!w->writable) return SQLITE_OK;
+  if (!w->writable || !w->dirty) return SQLITE_OK;
+  /* A stale window must not silently resurrect data after truncate, or
+   * write against an independently extended file. This is an optimistic
+   * sequential check, not a lock against concurrent resizes. */
+  {
+    int64_t current_size = -1;
+    rc = hct_vfs_size(w->file, &current_size);
+    if (rc != SQLITE_OK) return rc;
+    if (current_size != w->original_size) return SQLITE_BUSY_SNAPSHOT;
+  }
   /* Check all dirty ranges before writing any. Independently flushed
    * windows must not silently overwrite the same bytes. This is sequential
    * optimistic detection, NOT an atomic compare-and-swap: two simultaneous
@@ -123,6 +138,9 @@ int hct_vfs_window_flush(HctVfsWindow *w) {
                        (int)(span->end - span->begin),
                        w->offset + (int64_t)span->begin);
     if (rc != SQLITE_OK) return rc;
+    /* xWrite extends the logical file when a dirty range crosses EOF. */
+    if (w->offset + (int64_t)span->end > w->original_size)
+      w->original_size = w->offset + (int64_t)span->end;
     /* Allow subsequent flushes of this window without self-conflict. */
     memcpy(w->baseline + span->begin, w->data + span->begin,
            span->end - span->begin);
