@@ -39,7 +39,7 @@ done
 # HC-tree I/O adapter is applied. The runtime format/store checks remain too.
 {
   echo "HC-tree storage I/O source audit"
-  grep -nE '(^|[^[:alnum:]_])(open|pwrite|pread|mmap|munmap|ftruncate)[[:space:]]*\\(' \
+  grep -nE '(^|[^[:alnum:]_])(open|pwrite|pread|mmap|munmap|ftruncate)[[:space:]]*[(]' \
     "$OUT/hctree-src/src/hct_file.c" || true
 } | tee "$OUT/hctree-storage-audit.txt"
 if ! grep -q 'HCTREE_MURMUR_IO_ADAPTER' "$OUT/hctree-src/src/hct_file.c"; then
