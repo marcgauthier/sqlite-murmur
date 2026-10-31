@@ -3,6 +3,8 @@
 #include "hct_murmur_vfs_window.h"
 #include "sqlite_murmur.h"
 #include <array>
+#include <atomic>
+#include <thread>
 #include <cstring>
 #include <filesystem>
 #include <iostream>
@@ -101,6 +103,39 @@ int main() {
       throw std::runtime_error("stale same-byte window failed to detect conflict");
     hct_vfs_window_discard(stale);
     stale = nullptr;
+
+    // Concurrent flushes against the same original byte must never both
+    // succeed. A process-wide bridge guard protects the check/write sequence
+    // even when two independent windows race from separate threads.
+    for (int round = 0; round < 32; ++round) {
+      HctVfsWindow *one = nullptr, *two = nullptr;
+      ck(hct_vfs_window_open(a, 0, 4096, 1, &one), "open racing window one");
+      ck(hct_vfs_window_open(a, 0, 4096, 1, &two), "open racing window two");
+      const size_t pos = static_cast<size_t>(512 + round);
+      static_cast<char *>(hct_vfs_window_data(one))[pos] = 'A';
+      static_cast<char *>(hct_vfs_window_data(two))[pos] = 'B';
+      ck(hct_vfs_window_dirty(one, pos, 1), "mark racing window one");
+      ck(hct_vfs_window_dirty(two, pos, 1), "mark racing window two");
+      std::atomic<bool> go{false};
+      int r1 = SQLITE_ERROR, r2 = SQLITE_ERROR;
+      std::thread t1([&] {
+        while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+        r1 = hct_vfs_window_flush(one);
+      });
+      std::thread t2([&] {
+        while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+        r2 = hct_vfs_window_flush(two);
+      });
+      go.store(true, std::memory_order_release);
+      t1.join();
+      t2.join();
+      if (!((r1 == SQLITE_OK && r2 == SQLITE_BUSY_SNAPSHOT) ||
+            (r2 == SQLITE_OK && r1 == SQLITE_BUSY_SNAPSHOT)))
+        throw std::runtime_error("simultaneous same-byte flushes both succeeded or failed");
+      hct_vfs_window_discard(one);
+      hct_vfs_window_discard(two);
+    }
+    ck(hct_vfs_commit(a), "commit concurrent conflict winners");
     ck(hct_vfs_window_open(a, 0, 4096, 0, &window), "open read-only snapshot");
     if (hct_vfs_window_dirty(window, 1, 1) != SQLITE_MISUSE)
       throw std::runtime_error("read-only window accepted dirty marking");
@@ -155,6 +190,9 @@ int main() {
       throw std::runtime_error("overlapping first-page windows lost writes");
     if (page[64] != 'A' || page[65] != 'C')
       throw std::runtime_error("stale same-byte conflict or repeat flush corrupted data");
+    for (int round = 0; round < 32; ++round)
+      if (page[512 + round] != 'A' && page[512 + round] != 'B')
+        throw std::runtime_error("concurrent flush winner missing after cold reopen");
     std::array<char, 6> windowRead{};
     ck(hct_vfs_read(a, windowRead.data(), 6, 4100), "read persisted dirty window");
     if (std::memcmp(windowRead.data(), "window", 6))
@@ -195,7 +233,7 @@ int main() {
     ck(hct_vfs_close(b), "close second reopened pagemap"); b = nullptr;
     ck(sqlite_murmur_unregister(), "unregister");
     fs::remove_all(root);
-    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows,stale-same-byte-conflict,stale-resize-conflict\n";
+    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows,stale-same-byte-conflict,stale-resize-conflict,concurrent-same-byte-conflict\n";
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "HCT_MURMUR_BRIDGE_FAIL," << e.what() << "\n";
