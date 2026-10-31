@@ -165,8 +165,8 @@ int withMurmurMainFile(const std::string &path,
     std::memset(storage.data(), 0, storage.size() * sizeof(std::max_align_t));
     auto *file = reinterpret_cast<sqlite3_file *>(storage.data());
     int outFlags = 0;
-    check(vfs->xOpen(vfs, full.data(), file,
-                     SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_READWRITE, &outFlags),
+    // HC-tree can defer opening its main file until its first write. The\n    // benchmark control handle must initialize the RocksDB-backed VFS first.\n    check(vfs->xOpen(vfs, full.data(), file,
+                     SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, &outFlags),
           nullptr, "open Murmur VFS main file for HC-tree control");
     if (!file->pMethods || !file->pMethods->xClose) {
         throw std::runtime_error("Murmur VFS main file has no close method");
