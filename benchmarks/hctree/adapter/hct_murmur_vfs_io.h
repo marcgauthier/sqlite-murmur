@@ -7,6 +7,11 @@
 extern "C" {
 #endif
 typedef struct HctVfsFile HctVfsFile;
+/* Process-local recursive guard. Every bridge I/O operation participates.
+ * Callers holding the guard may invoke hct_vfs_* methods recursively.
+ * Not a cross-process or main+pagemap transaction lock. */
+int hct_vfs_lock(void);
+void hct_vfs_unlock(void);
 /* Both files use MAIN_DB to select persistent stores in sqlite-murmur.
  * Independent main and pagemap stores are NOT atomically committed.
  */
