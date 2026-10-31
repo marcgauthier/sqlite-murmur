@@ -46,21 +46,10 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
   w->offset = offset;
   w->bytes = bytes;
   w->writable = writable;
-  rc = hct_vfs_size(file, &w->original_size);
-  if (rc != SQLITE_OK) {
-    hct_vfs_window_discard(w);
-    return rc;
-  }
   w->data = sqlite3_malloc64(bytes);
   if (!w->data) {
     hct_vfs_window_discard(w);
     return SQLITE_NOMEM;
-  }
-  /* SQLite VFS xRead zero-fills past EOF and returns SHORT_READ. */
-  rc = hct_vfs_read(file, w->data, (int)bytes, offset);
-  if (rc != SQLITE_OK && rc != SQLITE_IOERR_SHORT_READ) {
-    hct_vfs_window_discard(w);
-    return rc;
   }
   if (writable) {
     w->baseline = sqlite3_malloc64(bytes);
@@ -68,7 +57,26 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
       hct_vfs_window_discard(w);
       return SQLITE_NOMEM;
     }
-    memcpy(w->baseline, w->data, bytes);
+  }
+  /* Snapshot size, bytes and baseline under the same guard used by flush,
+   * so a bridge writer cannot change the file between xFileSize and xRead. */
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) {
+    hct_vfs_window_discard(w);
+    return rc;
+  }
+  rc = hct_vfs_size(file, &w->original_size);
+  if (rc == SQLITE_OK) {
+    /* SQLite VFS xRead zero-fills past EOF and returns SHORT_READ. */
+    rc = hct_vfs_read(file, w->data, (int)bytes, offset);
+    if (rc == SQLITE_IOERR_SHORT_READ) rc = SQLITE_OK;
+    if (rc == SQLITE_OK && writable)
+      memcpy(w->baseline, w->data, bytes);
+  }
+  hct_vfs_unlock();
+  if (rc != SQLITE_OK) {
+    hct_vfs_window_discard(w);
+    return rc;
   }
   *out = w;
   return SQLITE_OK;
