@@ -107,6 +107,32 @@ int main() {
     ck(hct_vfs_window_close(window), "close read-only snapshot");
     window = nullptr;
 
+    // A window opened before truncate/growth must not resurrect bytes or
+    // overwrite data against a different file size. These are sequential
+    // resize checks, not a concurrency locking protocol.
+    ck(hct_vfs_window_open(b, 0, 4096, 1, &window), "open pre-truncate snapshot");
+    mapped = static_cast<char *>(hct_vfs_window_data(window));
+    mapped[128] = 'X';
+    ck(hct_vfs_window_dirty(window, 128, 1), "mark pre-truncate byte");
+    ck(hct_vfs_truncate(b, 2048), "truncate under open window");
+    if (hct_vfs_window_flush(window) != SQLITE_BUSY_SNAPSHOT)
+      throw std::runtime_error("stale window accepted truncated file");
+    hct_vfs_window_discard(window);
+    window = nullptr;
+    ck(hct_vfs_truncate(b, 4096), "restore pagemap size");
+    ck(hct_vfs_commit(b), "commit restored pagemap size");
+    ck(hct_vfs_window_open(b, 0, 4096, 1, &window), "open pre-growth snapshot");
+    mapped = static_cast<char *>(hct_vfs_window_data(window));
+    mapped[129] = 'Y';
+    ck(hct_vfs_window_dirty(window, 129, 1), "mark pre-growth byte");
+    ck(hct_vfs_truncate(b, 6144), "grow under open window");
+    if (hct_vfs_window_flush(window) != SQLITE_BUSY_SNAPSHOT)
+      throw std::runtime_error("stale window accepted grown file");
+    hct_vfs_window_discard(window);
+    window = nullptr;
+    ck(hct_vfs_truncate(b, 4096), "restore pagemap after growth");
+    ck(hct_vfs_commit(b), "commit pagemap after growth");
+
     sqlite_murmur_stats s1{}, s2{};
     ck(sqlite_murmur_get_stats(main.c_str(), &s1), "main stats");
     ck(sqlite_murmur_get_stats(pagemap.c_str(), &s2), "pagemap stats");
@@ -141,6 +167,8 @@ int main() {
     page.fill(0);
     ck(hct_vfs_read(b, page.data(), static_cast<int>(page.size()), 0), "read pagemap");
     if (std::memcmp(page.data(), "page-map", 8)) throw std::runtime_error("pagemap mismatch");
+    if (page[128] != 0 || page[129] != 0)
+      throw std::runtime_error("stale resized window modified pagemap");
     int64_t size = -1;
     ck(hct_vfs_size(a, &size), "main size after cold restart");
     if (size != 8192)
@@ -167,7 +195,7 @@ int main() {
     ck(hct_vfs_close(b), "close second reopened pagemap"); b = nullptr;
     ck(sqlite_murmur_unregister(), "unregister");
     fs::remove_all(root);
-    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows,stale-same-byte-conflict\n";
+    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows,stale-same-byte-conflict,stale-resize-conflict\n";
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "HCT_MURMUR_BRIDGE_FAIL," << e.what() << "\n";
