@@ -160,7 +160,7 @@ mod ffi_lock {
     }
 
     unsafe extern "C" {
-        pub fn open(path: *const c_char, flags: c_int) -> c_int;
+        pub fn open(path: *const c_char, flags: c_int, ...) -> c_int;
         pub fn fcntl(fd: c_int, cmd: c_int, arg: *mut Flock) -> c_int;
         pub fn close(fd: c_int) -> c_int;
         pub fn __errno_location() -> *mut c_int;

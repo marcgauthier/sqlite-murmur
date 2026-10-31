@@ -141,6 +141,27 @@ std::string textScalar(sqlite3 *db, const char *sql) {
         throw std::runtime_error(std::string("missing setting: ") + sql);
     return reinterpret_cast<const char *>(sqlite3_column_text(statement.get(), 0));
 }
+// HC-tree does not route unknown SQL PRAGMAs through the VFS xFileControl
+// hook. Configure and inspect Murmur-specific settings directly through
+// SQLITE_FCNTL_PRAGMA, rather than silently accepting ignored SQL settings.
+std::string murmurSetting(sqlite3 *db, const char *name, const std::string *value = nullptr) {
+#ifdef SQLITE_MURMUR_HCTREE_ENGINE
+    char *args[4] = {nullptr, const_cast<char *>(name),
+                     value ? const_cast<char *>(value->c_str()) : nullptr, nullptr};
+    const int rc = sqlite3_file_control(db, "main", SQLITE_FCNTL_PRAGMA, args);
+    std::unique_ptr<char, decltype(&sqlite3_free)> response(args[0], sqlite3_free);
+    if (rc != SQLITE_OK)
+        throw std::runtime_error(std::string("Murmur VFS setting '") + name +
+            "' failed: " + sqlite3_errstr(rc));
+    if (!response && !value)
+        throw std::runtime_error(std::string("Murmur VFS setting '") + name + "' returned no value");
+    return response ? std::string(response.get()) : std::string();
+#else
+    if (value) exec(db, ("PRAGMA " + std::string(name) + "=" + *value).c_str());
+    return textScalar(db, ("PRAGMA " + std::string(name)).c_str());
+#endif
+}
+
 void persist(sqlite3 *db, const std::string &path, bool murmur) {
     if (murmur) check(sqlite_murmur_checkpoint(path.c_str()), db, "persist Murmur database");
     else {
@@ -206,15 +227,23 @@ Result run(Options options) {
         exec(db.get(), ("PRAGMA page_size=" + std::to_string(pageSize)).c_str());
         exec(db.get(), "PRAGMA mmap_size=0");
         if (murmur) {
-            exec(db.get(), ("PRAGMA cipher='" + cipher + "'; PRAGMA compression='" + compression +
-                "'; PRAGMA flush_interval_ms=" + std::to_string(flushInterval) +
-                "; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL").c_str());
-            if (backgroundThreads) exec(db.get(), ("PRAGMA background_threads=" + std::to_string(backgroundThreads)).c_str());
-            backgroundThreads = static_cast<unsigned>(scalar(db.get(), "PRAGMA background_threads"));
-            rocksdbCacheBytes = static_cast<uint64_t>(scalar(db.get(), "PRAGMA rocksdb_block_cache_bytes"));
-            if (textScalar(db.get(), "PRAGMA cipher") != cipher ||
-                textScalar(db.get(), "PRAGMA compression") != compression ||
-                scalar(db.get(), "PRAGMA flush_interval_ms") != flushInterval)
+            // These settings are implemented by Murmur's VFS, not SQLite.
+            // The HC-tree SQL parser ignores unknown PRAGMAs, so use the
+            // VFS file-control API explicitly in that build.
+            murmurSetting(db.get(), "cipher", &cipher);
+            murmurSetting(db.get(), "compression", &compression);
+            const std::string flushSetting = std::to_string(flushInterval);
+            murmurSetting(db.get(), "flush_interval_ms", &flushSetting);
+            exec(db.get(), "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL");
+            if (backgroundThreads) {
+                const std::string threadSetting = std::to_string(backgroundThreads);
+                murmurSetting(db.get(), "background_threads", &threadSetting);
+            }
+            backgroundThreads = static_cast<unsigned>(std::stoull(murmurSetting(db.get(), "background_threads")));
+            rocksdbCacheBytes = std::stoull(murmurSetting(db.get(), "rocksdb_block_cache_bytes"));
+            if (murmurSetting(db.get(), "cipher") != cipher ||
+                murmurSetting(db.get(), "compression") != compression ||
+                std::stoull(murmurSetting(db.get(), "flush_interval_ms")) != flushInterval)
                 throw std::runtime_error("Murmur encryption/compression configuration did not take effect");
         } else {
             exec(db.get(), "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL");
