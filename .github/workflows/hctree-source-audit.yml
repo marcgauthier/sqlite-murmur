@@ -15,6 +15,19 @@ jobs:
       - uses: actions/checkout@v4
       - name: Inspect HC-tree POSIX storage call sites
         run: bash benchmarks/hctree/adapter/hctree_source_audit.sh 2>&1 | tee hctree-source-audit.log
+      # Preserve the exact pinned HC-tree implementation for source-level
+      # adapter development; do not use moving upstream branch contents.
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: pinned-hctree-integration-sources
+          path: |
+            hctree-source-audit/src/manifest.uuid
+            hctree-source-audit/src/src/hct_file.c
+            hctree-source-audit/src/src/hctFileInt.h
+            hctree-source-audit/src/src/hct_pman.c
+            hctree-source-audit/src/src/hct_database.c
+          if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
         with:

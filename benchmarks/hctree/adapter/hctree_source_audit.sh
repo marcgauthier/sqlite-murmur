@@ -24,4 +24,8 @@ for f in hct_file.c hct_pman.c hct_database.c hct_journal.c; do
     done
   fi
 done
+echo "=== HC-tree integration hook inventory ==="
+grep -nE '(^|[[:space:]])(static[[:space:]]+)?(int|void|i64)[[:space:]]+(sqlite3HctFile|hctFile)[A-Za-z0-9_]*(Commit|Rollback|Sync|Mmap|Munmap|Map|Write|Truncate|Close|Open)[A-Za-z0-9_]*[[:space:]]*[(]' "$out/src/src/hct_file.c" || true
+echo "=== Pinned source checksums ==="
+sha256sum "$out/src/manifest.uuid" "$out/src/src/hct_file.c" "$out/src/src/hctFileInt.h" "$out/src/src/hct_pman.c" "$out/src/src/hct_database.c"
 echo "SOURCE_AUDIT_DONE"
