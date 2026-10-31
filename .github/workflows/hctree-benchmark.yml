@@ -44,7 +44,7 @@ jobs:
             for file in hctree-benchmark-results/hctree-src/src/hct_file.c hctree-benchmark-results/hctree-src/src/hct_pman.c hctree-benchmark-results/hctree-src/src/hct_database.c; do
               if test -f "$file"; then
                 echo "=== $file ==="
-                grep -nE '(^|[^[:alnum:]_])(mmap|munmap|open|pread|pwrite|ftruncate|sqlite3OsOpen|sqlite3OsRead|sqlite3OsWrite)[[:space:]]*\\(' "$file" | head -n 100 || true
+                grep -nE '(^|[^[:alnum:]_])(mmap|munmap|open|pread|pwrite|ftruncate|sqlite3OsOpen|sqlite3OsRead|sqlite3OsWrite)[[:space:]]*\(' "$file" | head -n 100 || true
               fi
             done
           } | tee hctree-benchmark-results/hctree-storage-audit.txt
