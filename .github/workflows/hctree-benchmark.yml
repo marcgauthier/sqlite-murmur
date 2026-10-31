@@ -6,7 +6,12 @@ on:
       - benchmark/hctree-compare
     paths:
       - 'benchmarks/hctree/**'
+      - 'benchmarks/benchmark.cpp'
+      - 'third-party/source-files.sha256'
       - '.github/workflows/hctree-benchmark.yml'
+concurrency:
+  group: hctree-benchmark-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   comparison:
     runs-on: ubuntu-24.04
