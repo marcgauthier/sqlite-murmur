@@ -10,11 +10,18 @@ fi
 mkdir -p "$OUT"
 echo "MURMUR_COMMIT $(git -C "$ROOT" rev-parse HEAD)" | tee "$OUT/revisions.txt"
 lscpu > "$OUT/system.txt"
+# Pin the HC-tree Fossil revision observed in verified artifact 13037001077.
+# Using a moving branch tip makes cross-run throughput comparisons invalid.
+HCTREE_REV="e3820e788797940ae4556b35f7c6fd190d61d852c30637b9d3ab583b91223c5a"
 mkdir -p "$OUT/hctree-src"
-curl -fL --retry 3 --max-time 180 'https://www.sqlite.org/hctree/tarball/hctree.tar.gz?r=hctree' -o "$OUT/hctree.tar.gz"
+curl -fL --retry 3 --max-time 180 "https://www.sqlite.org/hctree/tarball/hctree.tar.gz?r=$HCTREE_REV" -o "$OUT/hctree.tar.gz"
 sha256sum "$OUT/hctree.tar.gz" | tee "$OUT/hctree.sha256"
 tar -xzf "$OUT/hctree.tar.gz" -C "$OUT/hctree-src" --strip-components=1
-test ! -f "$OUT/hctree-src/manifest.uuid" || cp "$OUT/hctree-src/manifest.uuid" "$OUT/hctree-fossil-commit.txt"
+if [[ ! -f "$OUT/hctree-src/manifest.uuid" ]] || [[ "$(tr -d '\\r\\n' < "$OUT/hctree-src/manifest.uuid")" != "$HCTREE_REV" ]]; then
+  echo "BENCH_ERROR,HC-tree source revision mismatch: expected $HCTREE_REV" >&2
+  exit 1
+fi
+cp "$OUT/hctree-src/manifest.uuid" "$OUT/hctree-fossil-commit.txt"
 # Preflight before compiling HC-tree or RocksDB: its current storage backend
 # bypasses SQLite's VFS via direct POSIX I/O and shared mmap. Merely passing
 # vfs=sqlite-murmur cannot make those pages reside in Murmur/RocksDB.

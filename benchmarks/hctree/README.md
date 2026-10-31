@@ -21,6 +21,17 @@ known-invalid comparison. An adapter marker
 `HCTREE_MURMUR_IO_ADAPTER` in the patched HC-tree `hct_file.c` enables
 the integrated build attempt, but does **not** bypass runtime validation.
 
+## Reproducible source and CI behavior
+
+The HC-tree source is pinned to Fossil revision
+`e3820e788797940ae4556b35f7c6fd190d61d852c30637b9d3ab583b91223c5a`,
+recorded in the SHA-256-verified artifact of
+[run 41185447569](https://github.com/marcgauthier/sqlite-murmur/actions/runs/41185447569).
+The runner verifies `manifest.uuid` after extraction and rejects a mismatch.
+The workflow is still manually dispatchable, but push-triggered retries are
+restricted to `benchmarks/hctree/adapter/**` until there is a real adapter.
+This avoids spending CI time on a configuration known to fail preflight.
+
 ## Work required before performance numbers are valid
 
 1. Implement an HC-tree file-I/O adapter that routes **both** database

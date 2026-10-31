@@ -1,14 +1,13 @@
 name: HCTree vs SQLite Murmur benchmark
 on:
   workflow_dispatch:
+  # Do not rerun a known-invalid comparison on every benchmark/doc edit.
+  # Automatically retry only when an actual HC-tree storage adapter lands.
   push:
     branches:
       - benchmark/hctree-compare
     paths:
-      - 'benchmarks/hctree/**'
-      - 'benchmarks/benchmark.cpp'
-      - 'third-party/source-files.sha256'
-      - '.github/workflows/hctree-benchmark.yml'
+      - 'benchmarks/hctree/adapter/**'
 concurrency:
   group: hctree-benchmark-${{ github.ref }}
   cancel-in-progress: true
