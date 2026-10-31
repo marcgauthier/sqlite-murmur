@@ -12,6 +12,11 @@ typedef struct HctVfsFile HctVfsFile;
  * Not a cross-process or main+pagemap transaction lock. */
 int hct_vfs_lock(void);
 void hct_vfs_unlock(void);
+/* Pin a file while a copy-backed window refers to it. Close returns
+ * SQLITE_BUSY until all pins are released. This does not protect callers
+ * racing to create new windows against a concurrently freed file handle. */
+int hct_vfs_pin_window(HctVfsFile *file);
+void hct_vfs_unpin_window(HctVfsFile *file);
 /* Both files use MAIN_DB to select persistent stores in sqlite-murmur.
  * Independent main and pagemap stores are NOT atomically committed.
  */

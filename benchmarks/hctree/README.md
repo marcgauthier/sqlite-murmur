@@ -138,3 +138,12 @@ RocksDB restart. The current lock is deliberately coarse and is **not a
 performance-optimized storage design**. It does not coordinate processes or
 unadapted HC-tree POSIX I/O, protect file-handle lifetime, or make main and
 page-map commits atomic. It must not be used to claim integrated throughput.
+
+## Window lifetime protection (2026-10-31)
+
+The bridge now pins its underlying VFS handle for each live copy-backed
+window. `hct_vfs_close()` returns `SQLITE_BUSY` rather than freeing the
+handle while a window still exists. The RocksDB integration test exercises
+this error path before flushing the window. Callers must still serialize
+file-handle ownership and new window creation; this does not make the
+bridge a complete HC-tree storage adapter.

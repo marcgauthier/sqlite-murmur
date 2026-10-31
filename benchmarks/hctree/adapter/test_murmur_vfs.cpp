@@ -45,6 +45,9 @@ int main() {
     // zero fill. This is NOT a substitute for POSIX MAP_SHARED semantics.
     HctVfsWindow *window = nullptr;
     ck(hct_vfs_window_open(a, 0, 8192, 1, &window), "open writable main window");
+    // Closing a file with an outstanding window must not free its VFS handle.
+    if (hct_vfs_close(a) != SQLITE_BUSY)
+      throw std::runtime_error("close succeeded with a live mapped window");
     auto *mapped = static_cast<char *>(hct_vfs_window_data(window));
     if (std::memcmp(mapped, "hctree", 6) || mapped[4100] != 0)
       throw std::runtime_error("window snapshot/EOF zero fill mismatch");

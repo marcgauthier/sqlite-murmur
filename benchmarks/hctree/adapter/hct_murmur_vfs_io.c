@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <pthread.h>
-struct HctVfsFile { sqlite3_file *handle; int murmur; };
+struct HctVfsFile { sqlite3_file *handle; int murmur; unsigned int windows; };
 
 /* Temporary process-wide recursive lock for the experimental bridge.
  * A window flush must compare its snapshot and write all dirty ranges as
@@ -34,6 +34,21 @@ int hct_vfs_lock(void) {
   return SQLITE_OK;
 }
 void hct_vfs_unlock(void) { pthread_mutex_unlock(&hct_lock); }
+int hct_vfs_pin_window(HctVfsFile *file) {
+  int rc;
+  if (!file) return SQLITE_MISUSE;
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  if (file->windows == UINT_MAX) rc = SQLITE_FULL;
+  else { ++file->windows; rc = SQLITE_OK; }
+  hct_vfs_unlock();
+  return rc;
+}
+void hct_vfs_unpin_window(HctVfsFile *file) {
+  if (!file || hct_vfs_lock() != SQLITE_OK) return;
+  if (file->windows) --file->windows;
+  hct_vfs_unlock();
+}
 int hct_vfs_open(const char *vfs_name, const char *path, int create,
                  HctVfsFile **out) {
   sqlite3_vfs *vfs;
@@ -47,6 +62,7 @@ int hct_vfs_open(const char *vfs_name, const char *path, int create,
   file = sqlite3_malloc64(sizeof(*file));
   if (!file) return SQLITE_NOMEM;
   file->murmur = strcmp(vfs_name, "sqlite-murmur") == 0;
+  file->windows = 0;
   file->handle = sqlite3_malloc64((sqlite3_uint64)vfs->szOsFile);
   if (!file->handle) { sqlite3_free(file); return SQLITE_NOMEM; }
   memset(file->handle, 0, (size_t)vfs->szOsFile);
@@ -145,7 +161,15 @@ int hct_vfs_commit(HctVfsFile *file) {
 int hct_vfs_close(HctVfsFile *file) {
   int rc;
   if (!file) return SQLITE_MISUSE;
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  /* Never free the backing sqlite3_file while a window can still flush. */
+  if (file->windows) {
+    hct_vfs_unlock();
+    return SQLITE_BUSY;
+  }
   rc = file->handle->pMethods->xClose(file->handle);
+  hct_vfs_unlock();
   sqlite3_free(file->handle);
   sqlite3_free(file);
   return rc;

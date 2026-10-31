@@ -1,0 +1,23 @@
+name: HC-tree pinned source I/O audit
+on:
+  push:
+    branches: [benchmark/hctree-compare]
+    paths: ['benchmarks/hctree/adapter/hctree_source_audit.sh']
+  workflow_dispatch:
+concurrency:
+  group: hctree-source-audit-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Inspect HC-tree POSIX storage call sites
+        run: bash benchmarks/hctree/adapter/hctree_source_audit.sh 2>&1 | tee hctree-source-audit.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pinned-hctree-source-audit
+          path: hctree-source-audit.log
+          if-no-files-found: error

@@ -18,6 +18,7 @@ struct HctVfsWindow {
   unsigned char *baseline; /* Snapshot for sequential conflict detection. */
   HctDirtySpan *dirty;
   int writable;
+  int pinned;
 };
 void hct_vfs_window_discard(HctVfsWindow *window) {
   HctDirtySpan *span, *next;
@@ -28,6 +29,7 @@ void hct_vfs_window_discard(HctVfsWindow *window) {
   }
   sqlite3_free(window->baseline);
   sqlite3_free(window->data);
+  if (window->pinned) hct_vfs_unpin_window(window->file);
   sqlite3_free(window);
 }
 int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
@@ -46,6 +48,12 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
   w->offset = offset;
   w->bytes = bytes;
   w->writable = writable;
+  rc = hct_vfs_pin_window(file);
+  if (rc != SQLITE_OK) {
+    sqlite3_free(w);
+    return rc;
+  }
+  w->pinned = 1;
   w->data = sqlite3_malloc64(bytes);
   if (!w->data) {
     hct_vfs_window_discard(w);
