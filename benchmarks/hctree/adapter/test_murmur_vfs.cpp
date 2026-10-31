@@ -50,6 +50,9 @@ int main() {
     ck(hct_vfs_window_dirty(window, 4100, 6), "mark dirty main page");
     ck(hct_vfs_window_close(window), "flush and close main window");
     window = nullptr;
+    // Dirty-byte flush does not implicitly extend the logical file to the
+    // entire mapped window. HC-tree must explicitly size the mapped file.
+    ck(hct_vfs_truncate(a, 8192), "extend main to mapped window length");
     ck(hct_vfs_commit(a), "commit window write");
     ck(hct_vfs_window_open(b, 0, 4096, 1, &window), "open pagemap window");
     mapped = static_cast<char *>(hct_vfs_window_data(window));
