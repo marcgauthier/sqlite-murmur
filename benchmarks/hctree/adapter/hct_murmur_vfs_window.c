@@ -107,28 +107,36 @@ int hct_vfs_window_flush(HctVfsWindow *w) {
   int rc;
   if (!w) return SQLITE_MISUSE;
   if (!w->writable || !w->dirty) return SQLITE_OK;
-  /* A stale window must not silently resurrect data after truncate, or
-   * write against an independently extended file. This is an optimistic
-   * sequential check, not a lock against concurrent resizes. */
+
+  /* Protect the entire check-and-write sequence, including all dirty spans.
+   * Without this, simultaneous flushes can both pass their baseline checks
+   * before either writes. All bridge reads/writes/truncates participate in
+   * this process-local recursive lock. It does not protect bypassing I/O,
+   * other processes, or atomicity across main and -pagemap stores. */
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
   {
     int64_t current_size = -1;
     rc = hct_vfs_size(w->file, &current_size);
-    if (rc != SQLITE_OK) return rc;
-    if (current_size != w->original_size) return SQLITE_BUSY_SNAPSHOT;
+    if (rc != SQLITE_OK) goto done;
+    if (current_size != w->original_size) {
+      rc = SQLITE_BUSY_SNAPSHOT;
+      goto done;
+    }
   }
-  /* Check all dirty ranges before writing any. Independently flushed
-   * windows must not silently overwrite the same bytes. This is sequential
-   * optimistic detection, NOT an atomic compare-and-swap: two simultaneous
-   * flushes can still race between xRead and xWrite. */
+  /* Check ALL dirty ranges before writing any. An optimistic conflict
+   * must not partially apply a multi-span window. */
   for (span = w->dirty; span; span = span->next) {
     size_t pos = span->begin;
     while (pos < span->end) {
       size_t remaining = span->end - pos;
       int n = (int)(remaining < sizeof(current) ? remaining : sizeof(current));
       rc = hct_vfs_read(w->file, current, n, w->offset + (int64_t)pos);
-      if (rc != SQLITE_OK && rc != SQLITE_IOERR_SHORT_READ) return rc;
-      if (memcmp(current, w->baseline + pos, (size_t)n) != 0)
-        return SQLITE_BUSY_SNAPSHOT;
+      if (rc != SQLITE_OK && rc != SQLITE_IOERR_SHORT_READ) goto done;
+      if (memcmp(current, w->baseline + pos, (size_t)n) != 0) {
+        rc = SQLITE_BUSY_SNAPSHOT;
+        goto done;
+      }
       pos += (size_t)n;
     }
   }
@@ -137,19 +145,20 @@ int hct_vfs_window_flush(HctVfsWindow *w) {
     rc = hct_vfs_write(w->file, w->data + span->begin,
                        (int)(span->end - span->begin),
                        w->offset + (int64_t)span->begin);
-    if (rc != SQLITE_OK) return rc;
-    /* xWrite extends the logical file when a dirty range crosses EOF. */
+    if (rc != SQLITE_OK) goto done;
     if (w->offset + (int64_t)span->end > w->original_size)
       w->original_size = w->offset + (int64_t)span->end;
-    /* Allow subsequent flushes of this window without self-conflict. */
     memcpy(w->baseline + span->begin, w->data + span->begin,
            span->end - span->begin);
     w->dirty = span->next;
     sqlite3_free(span);
   }
+  rc = SQLITE_OK;
+done:
+  hct_vfs_unlock();
   /* Caller must hct_vfs_commit() after flushing both files. The two
    * independent stores still have no atomic transaction boundary. */
-  return SQLITE_OK;
+  return rc;
 }
 int hct_vfs_window_close(HctVfsWindow *w) {
   int rc;
