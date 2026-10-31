@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
       # Cache the RocksDB/SQLite C++ objects across diagnostic iterations.
       # ccache is enabled by benchmarks/hctree/run.sh when installed.
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
         with:
           path: ~/.cache/ccache
           key: hctree-ccache-${{ runner.os }}-${{ github.sha }}
@@ -51,6 +51,12 @@ jobs:
       - name: Show compiler cache statistics
         if: always()
         run: ccache -s || true
+      # Persist compiler objects even when an integration smoke test fails.
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.cache/ccache
+          key: hctree-ccache-${{ runner.os }}-${{ github.sha }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
