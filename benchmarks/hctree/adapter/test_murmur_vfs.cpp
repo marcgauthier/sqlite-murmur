@@ -145,6 +145,42 @@ int main() {
     ck(hct_vfs_window_close(window), "close read-only snapshot");
     window = nullptr;
 
+    // HC-tree writes mapped page-map entries via direct pointer stores.
+    // Discover exact modified bytes without explicit dirty notifications,
+    // preserving unrelated writes from overlapping copy-backed snapshots.
+    HctVfsWindow *autoLeft = nullptr, *autoRight = nullptr;
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &autoLeft), "open auto-diff left");
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &autoRight), "open auto-diff right");
+    auto *autoLeftData = static_cast<char *>(hct_vfs_window_data(autoLeft));
+    auto *autoRightData = static_cast<char *>(hct_vfs_window_data(autoRight));
+    autoLeftData[700] = 'M';
+    autoLeftData[702] = 'N';
+    autoRightData[701] = 'Q';
+    ck(hct_vfs_window_flush_detected(autoLeft), "auto-diff left flush");
+    ck(hct_vfs_window_flush_detected(autoRight), "auto-diff right flush");
+    // Repeated diff flushes should be no-ops after the baseline advances.
+    ck(hct_vfs_window_flush_detected(autoLeft), "repeat auto-diff flush");
+    ck(hct_vfs_window_close(autoLeft), "close auto-diff left");
+    ck(hct_vfs_window_close(autoRight), "close auto-diff right");
+    autoLeft = nullptr;
+    autoRight = nullptr;
+
+    // Conflicting direct pointer edits must still detect stale snapshots.
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &autoLeft), "open auto-diff winner");
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &autoRight), "open auto-diff loser");
+    static_cast<char *>(hct_vfs_window_data(autoLeft))[704] = 'T';
+    static_cast<char *>(hct_vfs_window_data(autoRight))[704] = 'U';
+    ck(hct_vfs_window_flush_detected(autoLeft), "flush auto-diff winner");
+    if (hct_vfs_window_flush_detected(autoRight) != SQLITE_BUSY_SNAPSHOT)
+      throw std::runtime_error("auto-diff failed to reject stale same-byte write");
+    hct_vfs_window_discard(autoRight);
+    autoRight = nullptr;
+    ck(hct_vfs_window_close(autoLeft), "close auto-diff winner");
+    autoLeft = nullptr;
+    if (hct_vfs_window_flush_detected(nullptr) != SQLITE_MISUSE)
+      throw std::runtime_error("auto-diff accepted null window");
+    ck(hct_vfs_commit(a), "commit auto-diff writes");
+
     // A window opened before truncate/growth must not resurrect bytes or
     // overwrite data against a different file size. These are sequential
     // resize checks, not a concurrency locking protocol.
@@ -224,6 +260,9 @@ int main() {
     if (std::memcmp(page.data(), "hctree", 6)) throw std::runtime_error("main mismatch");
     if (page[20] != 'L' || page[21] != 'R')
       throw std::runtime_error("overlapping first-page windows lost writes");
+    if (page[700] != 'M' || page[701] != 'Q' || page[702] != 'N' ||
+        page[704] != 'T')
+      throw std::runtime_error("auto-diff pointer edits missing after cold reopen");
     if (page[64] != 'A' || page[65] != 'C')
       throw std::runtime_error("stale same-byte conflict or repeat flush corrupted data");
     for (int round = 0; round < 32; ++round)

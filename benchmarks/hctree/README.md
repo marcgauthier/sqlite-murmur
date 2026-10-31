@@ -157,3 +157,20 @@ same length; a successful same-size truncate also invalidates old snapshots.
 The cold-restart integration test checks both cases and a fresh post-resize
 write. This protects only the experimental bridge within one process, not
 HC-tree's unadapted POSIX mappings or multi-file transaction atomicity.
+
+## Automatic pointer-diff window experiment (2026-10-31)
+
+The copy-backed VFS window now exposes `hct_vfs_window_flush_detected()`,
+which scans a writable window for bytes changed through its pointer and
+atomically (relative to other bridge operations in this process) registers
+their exact dirty ranges before the existing conflict-checked flush. This
+removes the need for explicit dirty notifications in a **single window
+prototype**, closer to HC-tree's direct page-map pointer stores. Integration
+tests exercise overlapping pointer edits, same-byte conflicts, repeat flushes,
+and cold RocksDB reopening.
+
+**Not integrated HC-tree:** These windows are still not POSIX `MAP_SHARED`.
+They do not automatically propagate writes between concurrent mappings, flush
+at HC-tree transaction boundaries, provide cross-process coordination, or
+atomically commit the database and page-map. HC-tree's file/mapping calls
+remain unadapted, so integrated throughput is still unavailable.

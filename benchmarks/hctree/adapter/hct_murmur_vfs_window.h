@@ -2,8 +2,8 @@
  * NOT POSIX MAP_SHARED: callers must mark every modified range and flush.
  * Distinct dirty byte ranges from overlapping snapshots no longer clobber
  * each other. Sequential same-byte conflicts return SQLITE_BUSY_SNAPSHOT
- * before any range is written. Simultaneous flush races, locking and
- * atomic main+pagemap commit are NOT supported.
+ * before any range is written. Bridge flushes are process-serialized, but
+ * cross-process locking and atomic main+pagemap commit are NOT supported.
  */
 #ifndef HCT_MURMUR_VFS_WINDOW_H
 #define HCT_MURMUR_VFS_WINDOW_H
@@ -19,6 +19,12 @@ void *hct_vfs_window_data(HctVfsWindow *window);
 /* Exact byte ranges, not entire pages; ranges are coalesced on marking. */
 int hct_vfs_window_dirty(HctVfsWindow *window, size_t offset, size_t bytes);
 int hct_vfs_window_flush(HctVfsWindow *window);
+/* Discover changed bytes by comparing the writable pointer to its snapshot,
+ * then flush with the same conflict checks as explicit dirty spans. This
+ * supports direct pointer edits in a copy-backed prototype but DOES NOT
+ * provide MAP_SHARED coherence or atomic main+pagemap commits. Callers must
+ * serialize writes through the pointer and call this before closing. */
+int hct_vfs_window_flush_detected(HctVfsWindow *window);
 /* Flushes pending writes. On failure the window remains live for retry. */
 int hct_vfs_window_close(HctVfsWindow *window);
 /* Discards unflushed writes, for explicit rollback/error cleanup. */

@@ -185,6 +185,30 @@ done:
    * independent stores still have no atomic transaction boundary. */
   return rc;
 }
+/* Discover modifications made through a writable window pointer without
+ * requiring explicit dirty calls. This is a copy-backed experiment, NOT
+ * MAP_SHARED: callers must serialize their pointer writes and flush before
+ * another mapping expects to observe them. */
+int hct_vfs_window_flush_detected(HctVfsWindow *w) {
+  size_t pos;
+  int rc;
+  if (!w || !w->writable) return SQLITE_MISUSE;
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  pos = 0;
+  while (pos < w->bytes) {
+    size_t start;
+    while (pos < w->bytes && w->data[pos] == w->baseline[pos]) ++pos;
+    if (pos == w->bytes) break;
+    start = pos++;
+    while (pos < w->bytes && w->data[pos] != w->baseline[pos]) ++pos;
+    rc = hct_vfs_window_dirty(w, start, pos - start);
+    if (rc != SQLITE_OK) break;
+  }
+  if (rc == SQLITE_OK) rc = hct_vfs_window_flush(w);
+  hct_vfs_unlock();
+  return rc;
+}
 int hct_vfs_window_close(HctVfsWindow *w) {
   int rc;
   if (!w) return SQLITE_MISUSE;
