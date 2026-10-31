@@ -58,6 +58,13 @@ target_link_libraries(sqlite_murmur INTERFACE
 
 if(SQLITE_MURMUR_BUILD_TESTS)
   enable_testing()
+  # HC-tree adapter development: test basic VFS file I/O, not HC-tree mmap.
+  add_executable(hctree_vfs_unix_test
+    benchmarks/hctree/adapter/test_vfs_io.c
+    benchmarks/hctree/adapter/hct_murmur_vfs_io.c)
+  target_include_directories(hctree_vfs_unix_test PRIVATE benchmarks/hctree/adapter)
+  target_link_libraries(hctree_vfs_unix_test PRIVATE sqlite_murmur)
+  add_test(NAME hctree_vfs_unix COMMAND hctree_vfs_unix_test)
   if(SQLITE_MURMUR_ENABLE_CRSQLITE)
     add_executable(sqlite_murmur_replication_test tests/replication.cpp)
     target_compile_definitions(sqlite_murmur_replication_test PRIVATE SQLITE_MURMUR_HAS_CRSQLITE=1)
