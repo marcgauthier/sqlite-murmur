@@ -63,7 +63,7 @@ Database open(const std::string &path, unsigned sqliteCacheKiB, bool murmur) {
 #ifdef SQLITE_MURMUR_HCTREE_ENGINE
     // HC-tree is opt-in per connection. Compiling the HC-tree amalgamation alone
     // does not select its storage format.
-    filename = "file:" + path + "?hctree=1";
+    filename = "file:" + path + "?hctree=1&vfs=sqlite-murmur";
     flags |= SQLITE_OPEN_URI;
 #endif
     const int rc = murmur ? sqlite_murmur_open_v2(filename.c_str(), &raw, flags, &options)
@@ -293,6 +293,12 @@ Result run(Options options) {
     sqlite_murmur_stats stats{};
     {
         auto db = open(path, sqliteCacheKiB, murmur);
+#ifdef SQLITE_MURMUR_HCTREE_ENGINE
+        // HC-tree can bypass the selected VFS and create a POSIX file.
+        // Reject that configuration before applying settings or timing it.
+        if (murmur && std::filesystem::is_regular_file(path))
+            throw std::runtime_error("HC-tree created a POSIX database file instead of the Murmur RocksDB directory; VFS storage integration is not active");
+#endif
         exec(db.get(), ("PRAGMA page_size=" + std::to_string(pageSize)).c_str());
         exec(db.get(), "PRAGMA mmap_size=0");
         if (murmur) {
