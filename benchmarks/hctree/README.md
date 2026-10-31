@@ -174,3 +174,18 @@ They do not automatically propagate writes between concurrent mappings, flush
 at HC-tree transaction boundaries, provide cross-process coordination, or
 atomically commit the database and page-map. HC-tree's file/mapping calls
 remain unadapted, so integrated throughput is still unavailable.
+
+## Pinned source and bounded mapping staging (2026-10-31)
+
+The short source-audit workflow now uploads the **exact pinned** HC-tree
+`hct_file.c`, `hctFileInt.h`, `hct_pman.c` and `hct_database.c` as a
+separate artifact. This makes actual HC-tree integration code inspectable
+without repeatedly downloading or guessing upstream sources. The source
+manifest and `hct_file.c` SHA-256 are verified before staging a patch.
+
+`adapter/prepare_source.py` changes only `HCT_MMAP_QUANTA` from 1024 to 1
+in a **separate copy** of the pinned source, bounding future mapped data
+regions at 2 MiB instead of 2 GiB (for 4096-byte pages). CI checks that
+this is the only source change. It does not redirect POSIX I/O, supply
+shared writable mappings, or make main/pagemap commits atomic. The full
+benchmark's adapter readiness gate deliberately remains closed.

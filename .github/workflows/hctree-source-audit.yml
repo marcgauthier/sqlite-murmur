@@ -2,7 +2,9 @@ name: HC-tree pinned source I/O audit
 on:
   push:
     branches: [benchmark/hctree-compare]
-    paths: ['benchmarks/hctree/adapter/hctree_source_audit.sh']
+    paths:
+      - 'benchmarks/hctree/adapter/hctree_source_audit.sh'
+      - 'benchmarks/hctree/adapter/prepare_source.py'
   workflow_dispatch:
 concurrency:
   group: hctree-source-audit-${{ github.ref }}
@@ -15,6 +17,21 @@ jobs:
       - uses: actions/checkout@v4
       - name: Inspect HC-tree POSIX storage call sites
         run: bash benchmarks/hctree/adapter/hctree_source_audit.sh 2>&1 | tee hctree-source-audit.log
+      - name: Verify bounded-mapping source staging
+        run: |
+          python3 benchmarks/hctree/adapter/prepare_source.py \\
+            --source hctree-source-audit/src \\
+            --output hctree-source-audit/staged
+          python3 - <<'PY'
+          from pathlib import Path
+          src = Path('hctree-source-audit/src/src/hct_file.c').read_bytes()
+          dst = Path('hctree-source-audit/staged/src/hct_file.c').read_bytes()
+          old = b'#define HCT_MMAP_QUANTA          1024'
+          new = b'#define HCT_MMAP_QUANTA          1 /* HCT_MURMUR_STAGING_SMALL_MAPPINGS */'
+          assert dst.replace(new, old) == src, 'unexpected HC-tree source changes'
+          assert b'HCTREE_MURMUR_IO_ADAPTER' not in dst, 'premature benchmark enablement'
+          print('HCTREE_STAGING_EXACT_ONE_LINE_PASS')
+          PY
       # Preserve the exact pinned HC-tree implementation for source-level
       # adapter development; do not use moving upstream branch contents.
       - uses: actions/upload-artifact@v4
@@ -27,6 +44,7 @@ jobs:
             hctree-source-audit/src/src/hctFileInt.h
             hctree-source-audit/src/src/hct_pman.c
             hctree-source-audit/src/src/hct_database.c
+            hctree-source-audit/staged/src/hct_file.c
           if-no-files-found: error
       - uses: actions/upload-artifact@v4
         if: always()
