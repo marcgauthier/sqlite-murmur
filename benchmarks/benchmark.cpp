@@ -2,6 +2,8 @@
 #include "sqlite_murmur.h"
 #include "replication_blob.h"
 #include <chrono>
+#include <cstddef>
+#include <functional>
 #include <cmath>
 #include <cstring>
 #include <filesystem>
@@ -141,22 +143,66 @@ std::string textScalar(sqlite3 *db, const char *sql) {
         throw std::runtime_error(std::string("missing setting: ") + sql);
     return reinterpret_cast<const char *>(sqlite3_column_text(statement.get(), 0));
 }
-// HC-tree does not route unknown SQL PRAGMAs through the VFS xFileControl
-// hook. Configure and inspect Murmur-specific settings directly through
-// SQLITE_FCNTL_PRAGMA, rather than silently accepting ignored SQL settings.
-std::string murmurSetting(sqlite3 *db, const char *name, const std::string *value = nullptr) {
+// HC-tree does not expose its main pager through sqlite3_file_control():
+// the call returns SQLITE_NOTFOUND even when the Murmur VFS is active.
+// Use the registered VFS xOpen/xFileControl directly on the same canonical
+// main-file path. This is strictly a benchmark compatibility shim, not a
+// change to Murmur's production public API.
 #ifdef SQLITE_MURMUR_HCTREE_ENGINE
+int withMurmurMainFile(const std::string &path,
+                       const std::function<int(sqlite3_file *)> &operation) {
+    sqlite3_vfs *vfs = sqlite3_vfs_find("sqlite-murmur");
+    if (!vfs || !vfs->xFullPathname || !vfs->xOpen || vfs->szOsFile <= 0 ||
+        vfs->mxPathname <= 0)
+        throw std::runtime_error("Murmur VFS unavailable for HC-tree file control");
+    std::vector<char> full(static_cast<size_t>(vfs->mxPathname) + 1, 0);
+    check(vfs->xFullPathname(vfs, path.c_str(), static_cast<int>(full.size()), full.data()),
+          nullptr, "resolve Murmur VFS main path");
+    // sqlite3_file requires the alignment of SQLite's OS-file allocation.
+    std::vector<std::max_align_t> storage(
+        (static_cast<size_t>(vfs->szOsFile) + sizeof(std::max_align_t) - 1) /
+        sizeof(std::max_align_t));
+    std::memset(storage.data(), 0, storage.size() * sizeof(std::max_align_t));
+    auto *file = reinterpret_cast<sqlite3_file *>(storage.data());
+    int outFlags = 0;
+    check(vfs->xOpen(vfs, full.data(), file,
+                     SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_READWRITE, &outFlags),
+          nullptr, "open Murmur VFS main file for HC-tree control");
+    if (!file->pMethods || !file->pMethods->xClose) {
+        throw std::runtime_error("Murmur VFS main file has no close method");
+    }
+    int rc = SQLITE_ERROR;
+    try {
+        rc = operation(file);
+    } catch (...) {
+        file->pMethods->xClose(file);
+        throw;
+    }
+    const int closeRc = file->pMethods->xClose(file);
+    return rc == SQLITE_OK ? closeRc : rc;
+}
+#endif
+std::string murmurSetting(sqlite3 *db, const std::string &path,
+                          const char *name, const std::string *value = nullptr) {
+#ifdef SQLITE_MURMUR_HCTREE_ENGINE
+    (void)db;
     char *args[4] = {nullptr, const_cast<char *>(name),
                      value ? const_cast<char *>(value->c_str()) : nullptr, nullptr};
-    const int rc = sqlite3_file_control(db, "main", SQLITE_FCNTL_PRAGMA, args);
+    const int rc = withMurmurMainFile(path, [&](sqlite3_file *file) {
+        return file->pMethods->xFileControl
+            ? file->pMethods->xFileControl(file, SQLITE_FCNTL_PRAGMA, args)
+            : SQLITE_NOTFOUND;
+    });
     std::unique_ptr<char, decltype(&sqlite3_free)> response(args[0], sqlite3_free);
     if (rc != SQLITE_OK)
         throw std::runtime_error(std::string("Murmur VFS setting '") + name +
-            "' failed: " + sqlite3_errstr(rc));
+            "' failed: " + sqlite3_errstr(rc) +
+            (response ? std::string("; ") + response.get() : ""));
     if (!response && !value)
         throw std::runtime_error(std::string("Murmur VFS setting '") + name + "' returned no value");
     return response ? std::string(response.get()) : std::string();
 #else
+    (void)path;
     if (value) exec(db, ("PRAGMA " + std::string(name) + "=" + *value).c_str());
     return textScalar(db, ("PRAGMA " + std::string(name)).c_str());
 #endif
@@ -230,20 +276,20 @@ Result run(Options options) {
             // These settings are implemented by Murmur's VFS, not SQLite.
             // The HC-tree SQL parser ignores unknown PRAGMAs, so use the
             // VFS file-control API explicitly in that build.
-            murmurSetting(db.get(), "cipher", &cipher);
-            murmurSetting(db.get(), "compression", &compression);
+            murmurSetting(db.get(), path, "cipher", &cipher);
+            murmurSetting(db.get(), path, "compression", &compression);
             const std::string flushSetting = std::to_string(flushInterval);
-            murmurSetting(db.get(), "flush_interval_ms", &flushSetting);
+            murmurSetting(db.get(), path, "flush_interval_ms", &flushSetting);
             exec(db.get(), "PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL");
             if (backgroundThreads) {
                 const std::string threadSetting = std::to_string(backgroundThreads);
-                murmurSetting(db.get(), "background_threads", &threadSetting);
+                murmurSetting(db.get(), path, "background_threads", &threadSetting);
             }
-            backgroundThreads = static_cast<unsigned>(std::stoull(murmurSetting(db.get(), "background_threads")));
-            rocksdbCacheBytes = std::stoull(murmurSetting(db.get(), "rocksdb_block_cache_bytes"));
-            if (murmurSetting(db.get(), "cipher") != cipher ||
-                murmurSetting(db.get(), "compression") != compression ||
-                std::stoull(murmurSetting(db.get(), "flush_interval_ms")) != flushInterval)
+            backgroundThreads = static_cast<unsigned>(std::stoull(murmurSetting(db.get(), path, "background_threads")));
+            rocksdbCacheBytes = std::stoull(murmurSetting(db.get(), path, "rocksdb_block_cache_bytes"));
+            if (murmurSetting(db.get(), path, "cipher") != cipher ||
+                murmurSetting(db.get(), path, "compression") != compression ||
+                std::stoull(murmurSetting(db.get(), path, "flush_interval_ms")) != flushInterval)
                 throw std::runtime_error("Murmur encryption/compression configuration did not take effect");
         } else {
             exec(db.get(), "PRAGMA journal_mode=WAL; PRAGMA synchronous=NORMAL");
@@ -271,14 +317,12 @@ Result run(Options options) {
 #ifdef SQLITE_MURMUR_HCTREE_ENGINE
         // Verify the actual HC-tree file signature through Murmur's VFS,
         // rather than accidentally benchmarking the stock SQLite btree.
-        sqlite3_file *mainFile = nullptr;
-        check(sqlite3_file_control(db.get(), "main", SQLITE_FCNTL_FILE_POINTER, &mainFile),
-              db.get(), "get HC-tree main file");
-        if (!mainFile || !mainFile->pMethods || !mainFile->pMethods->xRead)
-            throw std::runtime_error("HC-tree main file unavailable");
         char magic[16]{};
-        check(mainFile->pMethods->xRead(mainFile, magic, sizeof(magic), 0),
-              db.get(), "read HC-tree file signature");
+        check(withMurmurMainFile(path, [&](sqlite3_file *file) {
+            return file->pMethods->xRead
+                ? file->pMethods->xRead(file, magic, sizeof(magic), 0)
+                : SQLITE_NOTFOUND;
+        }), db.get(), "read HC-tree file signature through Murmur VFS");
         if (std::memcmp(magic, "HCtree database ", 16) != 0)
             throw std::runtime_error("HC-tree engine built but database is not HC-tree format");
         std::cout << "BENCH_ENGINE,hctree\\n";
