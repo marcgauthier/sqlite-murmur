@@ -167,9 +167,30 @@ int withMurmurMainFile(const std::string &path,
     int outFlags = 0;
     // HC-tree can defer opening its main file until its first write. The
     // benchmark control handle must initialize the RocksDB-backed VFS first.
-    check(vfs->xOpen(vfs, full.data(), file,
-                     SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, &outFlags),
-          nullptr, "open Murmur VFS main file for HC-tree control");
+    const int openRc = vfs->xOpen(
+        vfs, full.data(), file,
+        SQLITE_OPEN_MAIN_DB | SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE, &outFlags);
+    if (openRc != SQLITE_OK) {
+        // A failed second open can mean HC-tree did not use Murmur's VFS,
+        // or that its canonical filename differs from the VFS store key.
+        // Distinguish those cases before changing the storage integration.
+        sqlite_murmur_stats probe{};
+        const int storeRc = sqlite_murmur_get_stats(path.c_str(), &probe);
+        std::error_code fsError;
+        const bool exists = std::filesystem::exists(path, fsError);
+        const bool directory = exists && std::filesystem::is_directory(path, fsError);
+        const bool regular = exists && std::filesystem::is_regular_file(path, fsError);
+        throw std::runtime_error(
+            "open Murmur VFS main file for HC-tree control: " +
+            std::string(sqlite3_errstr(openRc)) +
+            " (rc=" + std::to_string(openRc) +
+            ", live_store_rc=" + std::to_string(storeRc) +
+            ", path=" + path +
+            ", canonical=" + std::string(full.data()) +
+            ", exists=" + std::to_string(exists) +
+            ", directory=" + std::to_string(directory) +
+            ", regular_file=" + std::to_string(regular) + ")");
+    }
     if (!file->pMethods || !file->pMethods->xClose) {
         throw std::runtime_error("Murmur VFS main file has no close method");
     }
