@@ -325,9 +325,9 @@ Result run(Options options) {
         }), db.get(), "read HC-tree file signature through Murmur VFS");
         if (std::memcmp(magic, "hctree version 0", 16) != 0)
             throw std::runtime_error("HC-tree engine built but database is not HC-tree format");
-        std::cout << "BENCH_ENGINE,hctree\\n";
+        std::cout << "BENCH_ENGINE,hctree\n";
 #else
-        std::cout << "BENCH_ENGINE,standard\\n";
+        std::cout << "BENCH_ENGINE,standard\n";
 #endif
 
         Database source(nullptr);
