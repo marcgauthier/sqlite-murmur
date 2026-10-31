@@ -20427,7 +20427,7 @@ f17dd48c11c2037fbbce554433f7484ef1f47dee3341041b2a0a55eab37e251d  crates/murmur-
 f17e8c58b9467d609c26547be22c908b01383af26342b37ac796cb5c87e91a9a  crates/murmur-replication/vendor/web-sys/src/features/gen_PeriodicWaveOptions.rs
 f1815af1a3878fe4ef29e9faa11662adc1695d2f20fd1fc4440ac30a3634a519  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_windowsapp-api-ms-win-eventing-provider-l1-1-0.a
 f182529b336830ac29dbd6b6ca4b9dfdbd03edd8d2741883ba8fdf31b6c55368  crates/murmur-replication/vendor/linux-raw-sys/src/s390x/loop_device.rs
-f1843cb2d13e39006d626806359da59b8edd369627b35ffee37144db955fcffa  crates/murmur-admin/src/lib.rs
+cadbcdd923dbe13eaf60bbc49fd124cf1fe4258829c96fdb5373198e4970d7bf  crates/murmur-admin/src/lib.rs
 f1867da996ada112a87e1cb12c8416fbca15bfa49c4fea9e10dcf9ac7ba14a2a  crates/murmur-replication/vendor/web-sys/src/features/gen_OpenFilePickerOptions.rs
 f1885d437d2c71a165dbe1acec1004e9c0e46d867b99c98f2b8672ba3fa65d0b  third-party/cr-sqlite/vendor/winapi-x86_64-pc-windows-gnu-0.4.0/lib/libwinapi_onecore-api-ms-win-core-interlocked-l1-2-0.a
 f18f3c55cd887bcec82c56c2503bfb85576066553a377aa1380e34d6dbb374c8  crates/murmur-replication/vendor/windows-sys-0.52.0/src/Windows/Win32/NetworkManagement/InternetConnectionWizard/mod.rs
