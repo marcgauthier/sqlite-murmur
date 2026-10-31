@@ -15,6 +15,24 @@ curl -fL --retry 3 --max-time 180 'https://www.sqlite.org/hctree/tarball/hctree.
 sha256sum "$OUT/hctree.tar.gz" | tee "$OUT/hctree.sha256"
 tar -xzf "$OUT/hctree.tar.gz" -C "$OUT/hctree-src" --strip-components=1
 test ! -f "$OUT/hctree-src/manifest.uuid" || cp "$OUT/hctree-src/manifest.uuid" "$OUT/hctree-fossil-commit.txt"
+# Preflight before compiling HC-tree or RocksDB: its current storage backend
+# bypasses SQLite's VFS via direct POSIX I/O and shared mmap. Merely passing
+# vfs=sqlite-murmur cannot make those pages reside in Murmur/RocksDB.
+# An adapter must handle both the main file and the -pagemap file, with
+# durable, coherent mapped-page semantics. Do not report standalone HC-tree
+# numbers as integrated numbers.
+{
+  echo "HC-tree storage I/O source audit (pre-build)"
+  grep -nE '(^|[^[:alnum:]_])(open|pwrite|pread|mmap|munmap|ftruncate)[[:space:]]*[(]' \
+    "$OUT/hctree-src/src/hct_file.c" || true
+  echo "Murmur VFS mmap support:"
+  grep -n 'x_fetch: None' "$ROOT/crates/murmur-storage/src/vfs.rs" || true
+} | tee "$OUT/hctree-storage-audit.txt"
+if ! grep -q 'HCTREE_MURMUR_IO_ADAPTER' "$OUT/hctree-src/src/hct_file.c"; then
+  echo "BENCH_ERROR,HC-tree uses direct POSIX I/O and mmap outside Murmur VFS. Both database and page-map I/O require a durable RocksDB-backed adapter; integrated measurements are invalid." \
+    | tee "$OUT/integrated-storage-blocker.txt" >&2
+  exit 1
+fi
 (cd "$OUT/hctree-src" && ./configure --enable-shared && make -j2 libsqlite3.so)
 # HC-tree's makefile generates libsqlite3.so directly in the build directory.
 LIB="$OUT/hctree-src"
@@ -31,22 +49,8 @@ for repl in off; do
     --database="$OUT/hctree-smoke-$repl.db" --seconds=0.01 \
     --batch=1 --replication="$repl" > "$OUT/hctree-smoke-$repl.txt"
 done
-# Integrated comparison: identical Murmur+RocksDB+CRR workloads, changing
-# only the SQLite engine. HC-tree native leader/follower journal stays disabled.
-# HC-tree's current hct_file.c opens and mmap()s POSIX files directly.
-# A SQLite URI VFS selection does not redirect these accesses into RocksDB.
-# Refuse to compile a knowingly invalid integrated benchmark until an actual
-# HC-tree I/O adapter is applied. The runtime format/store checks remain too.
-{
-  echo "HC-tree storage I/O source audit"
-  grep -nE '(^|[^[:alnum:]_])(open|pwrite|pread|mmap|munmap|ftruncate)[[:space:]]*[(]' \
-    "$OUT/hctree-src/src/hct_file.c" || true
-} | tee "$OUT/hctree-storage-audit.txt"
-if ! grep -q 'HCTREE_MURMUR_IO_ADAPTER' "$OUT/hctree-src/src/hct_file.c"; then
-  echo "BENCH_ERROR,HC-tree hct_file.c uses direct POSIX file I/O and mmap; the Murmur VFS cannot intercept it. An HC-tree file and page-map I/O adapter is required before integrated results are valid." \
-    | tee "$OUT/integrated-storage-blocker.txt" >&2
-  exit 1
-fi
+# Integrated comparison is allowed only after the pre-build adapter check.
+# Runtime format and RocksDB statistics checks in benchmark.cpp remain mandatory.
 cmake -S "$ROOT" -B "$ROOT/build-hctree-integrated" -DCMAKE_BUILD_TYPE=Release "${CACHE_FLAGS[@]}" \
   -DSQLITE_MURMUR_BUILD_TESTS=OFF -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON \
   -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON \
