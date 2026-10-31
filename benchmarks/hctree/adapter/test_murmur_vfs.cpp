@@ -47,6 +47,10 @@ int main() {
     ck(hct_vfs_close(b), "close pagemap"); b = nullptr;
     if (!fs::is_directory(main) || !fs::is_directory(pagemap))
       throw std::runtime_error("expected RocksDB directories, not POSIX files");
+    // A close/reopen under the same VFS registration can reuse live caches.
+    // Tear down the entire Murmur registry to prove a cold RocksDB reopen.
+    ck(sqlite_murmur_unregister(), "unregister before cold reopen");
+    ck(sqlite_murmur_register(&config), "register after cold restart");
     ck(hct_vfs_open("sqlite-murmur", main.c_str(), 0, &a), "reopen main");
     ck(hct_vfs_open("sqlite-murmur", pagemap.c_str(), 0, &b), "reopen pagemap");
     page.fill(0);
@@ -55,11 +59,33 @@ int main() {
     page.fill(0);
     ck(hct_vfs_read(b, page.data(), static_cast<int>(page.size()), 0), "read pagemap");
     if (std::memcmp(page.data(), "page-map", 8)) throw std::runtime_error("pagemap mismatch");
+    int64_t size = -1;
+    ck(hct_vfs_size(a, &size), "main size after cold restart");
+    if (size != static_cast<int64_t>(page.size()))
+      throw std::runtime_error("main size mismatch after cold restart");
+    ck(hct_vfs_size(b, &size), "pagemap size after cold restart");
+    if (size != static_cast<int64_t>(page.size()))
+      throw std::runtime_error("pagemap size mismatch after cold restart");
+    // Verify a second independent persistence cycle, including truncation.
+    ck(hct_vfs_truncate(b, 2048), "truncate pagemap");
+    ck(hct_vfs_commit(b), "commit pagemap truncation");
     ck(hct_vfs_close(a), "close reopened main"); a = nullptr;
     ck(hct_vfs_close(b), "close reopened pagemap"); b = nullptr;
+    ck(sqlite_murmur_unregister(), "unregister before second cold reopen");
+    ck(sqlite_murmur_register(&config), "register for second cold reopen");
+    ck(hct_vfs_open("sqlite-murmur", main.c_str(), 0, &a), "second reopen main");
+    ck(hct_vfs_open("sqlite-murmur", pagemap.c_str(), 0, &b), "second reopen pagemap");
+    ck(hct_vfs_size(b, &size), "truncated pagemap size after cold restart");
+    if (size != 2048) throw std::runtime_error("pagemap truncation did not persist");
+    page.fill(0);
+    ck(hct_vfs_read(a, page.data(), static_cast<int>(page.size()), 0), "main read after second cold restart");
+    if (std::memcmp(page.data(), "hctree", 6))
+      throw std::runtime_error("main changed during pagemap truncation");
+    ck(hct_vfs_close(a), "close second reopened main"); a = nullptr;
+    ck(hct_vfs_close(b), "close second reopened pagemap"); b = nullptr;
     ck(sqlite_murmur_unregister(), "unregister");
     fs::remove_all(root);
-    std::cout << "HCT_MURMUR_BRIDGE_PASS,persistent-main-and-pagemap\n";
+    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation\n";
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "HCT_MURMUR_BRIDGE_FAIL," << e.what() << "\n";
