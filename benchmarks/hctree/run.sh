@@ -17,7 +17,7 @@ mkdir -p "$OUT/hctree-src"
 curl -fL --retry 3 --max-time 180 "https://www.sqlite.org/hctree/tarball/hctree.tar.gz?r=$HCTREE_REV" -o "$OUT/hctree.tar.gz"
 sha256sum "$OUT/hctree.tar.gz" | tee "$OUT/hctree.sha256"
 tar -xzf "$OUT/hctree.tar.gz" -C "$OUT/hctree-src" --strip-components=1
-if [[ ! -f "$OUT/hctree-src/manifest.uuid" ]] || [[ "$(tr -d '\\r\\n' < "$OUT/hctree-src/manifest.uuid")" != "$HCTREE_REV" ]]; then
+if [[ ! -f "$OUT/hctree-src/manifest.uuid" ]] || [[ "$(tr -d '\r\n' < "$OUT/hctree-src/manifest.uuid")" != "$HCTREE_REV" ]]; then
   echo "BENCH_ERROR,HC-tree source revision mismatch: expected $HCTREE_REV" >&2
   exit 1
 fi
