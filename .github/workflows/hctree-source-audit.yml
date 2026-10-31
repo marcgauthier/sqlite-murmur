@@ -5,6 +5,7 @@ on:
     paths:
       - 'benchmarks/hctree/adapter/hctree_source_audit.sh'
       - 'benchmarks/hctree/adapter/prepare_source.py'
+      - '.github/workflows/hctree-source-audit.yml'
   workflow_dispatch:
 concurrency:
   group: hctree-source-audit-${{ github.ref }}
@@ -19,8 +20,8 @@ jobs:
         run: bash benchmarks/hctree/adapter/hctree_source_audit.sh 2>&1 | tee hctree-source-audit.log
       - name: Verify bounded-mapping source staging
         run: |
-          python3 benchmarks/hctree/adapter/prepare_source.py \\
-            --source hctree-source-audit/src \\
+          python3 benchmarks/hctree/adapter/prepare_source.py \
+            --source hctree-source-audit/src \
             --output hctree-source-audit/staged
           python3 - <<'PY'
           from pathlib import Path
