@@ -70,13 +70,13 @@ int main() {
     auto *leftData = static_cast<char *>(hct_vfs_window_data(left));
     auto *rightData = static_cast<char *>(hct_vfs_window_data(right));
     leftData[20] = 'L';
-    leftData[4104] = '1';
+    leftData[4110] = '1';
     rightData[21] = 'R';
-    rightData[4105] = '2';
+    rightData[4111] = '2';
     ck(hct_vfs_window_dirty(left, 20, 1), "left first byte");
-    ck(hct_vfs_window_dirty(left, 4104, 1), "left second page");
+    ck(hct_vfs_window_dirty(left, 4110, 1), "left second page");
     ck(hct_vfs_window_dirty(right, 21, 1), "right first byte");
-    ck(hct_vfs_window_dirty(right, 4105, 1), "right second page");
+    ck(hct_vfs_window_dirty(right, 4111, 1), "right second page");
     ck(hct_vfs_window_close(left), "flush left snapshot");
     ck(hct_vfs_window_close(right), "flush right snapshot");
     ck(hct_vfs_commit(a), "commit overlapping snapshots");
@@ -111,7 +111,7 @@ int main() {
     if (std::memcmp(windowRead.data(), "window", 6))
       throw std::runtime_error("dirty window page did not persist");
     std::array<char, 2> overlappingRead{};
-    ck(hct_vfs_read(a, overlappingRead.data(), 2, 4104),
+    ck(hct_vfs_read(a, overlappingRead.data(), 2, 4110),
        "read overlapping second-page windows");
     if (std::memcmp(overlappingRead.data(), "12", 2))
       throw std::runtime_error("overlapping second-page windows lost writes");
