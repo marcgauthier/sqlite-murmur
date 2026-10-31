@@ -3,7 +3,36 @@
 #include <limits.h>
 #include <stddef.h>
 #include <string.h>
+#include <pthread.h>
 struct HctVfsFile { sqlite3_file *handle; int murmur; };
+
+/* Temporary process-wide recursive lock for the experimental bridge.
+ * A window flush must compare its snapshot and write all dirty ranges as
+ * one indivisible operation relative to other bridge reads/writes/resizes.
+ * Recursive because window_flush calls the public hct_vfs_* methods.
+ * This does NOT coordinate other processes or SQLite/HC-tree I/O that
+ * bypasses the bridge. Replace with per-store transaction coordination
+ * before performance benchmarking. */
+static pthread_once_t hct_lock_once = PTHREAD_ONCE_INIT;
+static pthread_mutex_t hct_lock;
+static int hct_lock_init_rc = 0;
+static void hct_lock_init(void) {
+  pthread_mutexattr_t attr;
+  int rc = pthread_mutexattr_init(&attr);
+  if (rc == 0) {
+    rc = pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_RECURSIVE);
+    if (rc == 0) rc = pthread_mutex_init(&hct_lock, &attr);
+    pthread_mutexattr_destroy(&attr);
+  }
+  hct_lock_init_rc = rc;
+}
+int hct_vfs_lock(void) {
+  if (pthread_once(&hct_lock_once, hct_lock_init) != 0 ||
+      hct_lock_init_rc != 0 || pthread_mutex_lock(&hct_lock) != 0)
+    return SQLITE_IOERR;
+  return SQLITE_OK;
+}
+void hct_vfs_unlock(void) { pthread_mutex_unlock(&hct_lock); }
 int hct_vfs_open(const char *vfs_name, const char *path, int create,
                  HctVfsFile **out) {
   sqlite3_vfs *vfs;
@@ -51,41 +80,66 @@ int hct_vfs_open(const char *vfs_name, const char *path, int create,
 int hct_vfs_read(HctVfsFile *file, void *data, int bytes, int64_t offset) {
   if (!file || !data || bytes < 0 || offset < 0 || offset > INT64_MAX - bytes)
     return SQLITE_MISUSE;
-  return file->handle->pMethods->xRead(file->handle, data, bytes, offset);
+  int rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  rc = file->handle->pMethods->xRead(file->handle, data, bytes, offset);
+  hct_vfs_unlock();
+  return rc;
 }
 int hct_vfs_write(HctVfsFile *file, const void *data, int bytes, int64_t offset) {
   if (!file || !data || bytes < 0 || offset < 0 || offset > INT64_MAX - bytes)
     return SQLITE_MISUSE;
-  return file->handle->pMethods->xWrite(file->handle, data, bytes, offset);
+  int rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  rc = file->handle->pMethods->xWrite(file->handle, data, bytes, offset);
+  hct_vfs_unlock();
+  return rc;
 }
 int hct_vfs_truncate(HctVfsFile *file, int64_t size) {
   if (!file || size < 0) return SQLITE_MISUSE;
-  return file->handle->pMethods->xTruncate(file->handle, size);
+  int rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  rc = file->handle->pMethods->xTruncate(file->handle, size);
+  hct_vfs_unlock();
+  return rc;
 }
 int hct_vfs_size(HctVfsFile *file, int64_t *size) {
   sqlite3_int64 value = 0;
   int rc;
   if (!file || !size) return SQLITE_MISUSE;
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
   rc = file->handle->pMethods->xFileSize(file->handle, &value);
   if (rc == SQLITE_OK) *size = (int64_t)value;
+  hct_vfs_unlock();
   return rc;
 }
 int hct_vfs_sync(HctVfsFile *file) {
   if (!file) return SQLITE_MISUSE;
-  return file->handle->pMethods->xSync(file->handle, SQLITE_SYNC_NORMAL);
+  int rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  rc = file->handle->pMethods->xSync(file->handle, SQLITE_SYNC_NORMAL);
+  hct_vfs_unlock();
+  return rc;
 }
 int hct_vfs_commit(HctVfsFile *file) {
   int rc;
   if (!file) return SQLITE_MISUSE;
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
   rc = hct_vfs_sync(file);
-  if (rc != SQLITE_OK) return rc;
-  if (!file->murmur) return SQLITE_OK;
-  if (!file->handle->pMethods->xFileControl) return SQLITE_MISUSE;
-  rc = file->handle->pMethods->xFileControl(
-      file->handle, SQLITE_FCNTL_COMMIT_PHASETWO, NULL);
-  if (rc != SQLITE_OK) return rc;
-  return file->handle->pMethods->xFileControl(
-      file->handle, SQLITE_MURMUR_FCNTL_FLUSH, NULL);
+  if (rc == SQLITE_OK && file->murmur) {
+    if (!file->handle->pMethods->xFileControl) rc = SQLITE_MISUSE;
+    else {
+      rc = file->handle->pMethods->xFileControl(
+          file->handle, SQLITE_FCNTL_COMMIT_PHASETWO, NULL);
+      if (rc == SQLITE_OK)
+        rc = file->handle->pMethods->xFileControl(
+            file->handle, SQLITE_MURMUR_FCNTL_FLUSH, NULL);
+    }
+  }
+  hct_vfs_unlock();
+  return rc;
 }
 int hct_vfs_close(HctVfsFile *file) {
   int rc;
