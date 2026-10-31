@@ -80,6 +80,27 @@ int main() {
     ck(hct_vfs_window_close(left), "flush left snapshot");
     ck(hct_vfs_window_close(right), "flush right snapshot");
     ck(hct_vfs_commit(a), "commit overlapping snapshots");
+    // Stale snapshots must not overwrite a byte another window changed.
+    HctVfsWindow *first = nullptr, *stale = nullptr;
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &first), "open first conflicting snapshot");
+    ck(hct_vfs_window_open(a, 0, 4096, 1, &stale), "open stale conflicting snapshot");
+    auto *firstData = static_cast<char *>(hct_vfs_window_data(first));
+    auto *staleData = static_cast<char *>(hct_vfs_window_data(stale));
+    firstData[64] = 'A';
+    staleData[64] = 'B';
+    ck(hct_vfs_window_dirty(first, 64, 1), "mark first conflicting write");
+    ck(hct_vfs_window_dirty(stale, 64, 1), "mark stale conflicting write");
+    ck(hct_vfs_window_flush(first), "flush first conflicting snapshot");
+    // A second flush of the same window must not self-conflict.
+    firstData[65] = 'C';
+    ck(hct_vfs_window_dirty(first, 65, 1), "mark second write on first window");
+    ck(hct_vfs_window_close(first), "close reused first window");
+    first = nullptr;
+    ck(hct_vfs_commit(a), "commit first conflicting snapshot");
+    if (hct_vfs_window_flush(stale) != SQLITE_BUSY_SNAPSHOT)
+      throw std::runtime_error("stale same-byte window failed to detect conflict");
+    hct_vfs_window_discard(stale);
+    stale = nullptr;
     ck(hct_vfs_window_open(a, 0, 4096, 0, &window), "open read-only snapshot");
     if (hct_vfs_window_dirty(window, 1, 1) != SQLITE_MISUSE)
       throw std::runtime_error("read-only window accepted dirty marking");
@@ -106,6 +127,8 @@ int main() {
     if (std::memcmp(page.data(), "hctree", 6)) throw std::runtime_error("main mismatch");
     if (page[20] != 'L' || page[21] != 'R')
       throw std::runtime_error("overlapping first-page windows lost writes");
+    if (page[64] != 'A' || page[65] != 'C')
+      throw std::runtime_error("stale same-byte conflict or repeat flush corrupted data");
     std::array<char, 6> windowRead{};
     ck(hct_vfs_read(a, windowRead.data(), 6, 4100), "read persisted dirty window");
     if (std::memcmp(windowRead.data(), "window", 6))
@@ -144,7 +167,7 @@ int main() {
     ck(hct_vfs_close(b), "close second reopened pagemap"); b = nullptr;
     ck(sqlite_murmur_unregister(), "unregister");
     fs::remove_all(root);
-    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows\n";
+    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows,stale-same-byte-conflict\n";
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "HCT_MURMUR_BRIDGE_FAIL," << e.what() << "\n";

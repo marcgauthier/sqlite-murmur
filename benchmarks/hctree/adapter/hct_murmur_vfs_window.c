@@ -14,6 +14,7 @@ struct HctVfsWindow {
   int64_t offset;
   size_t bytes;
   unsigned char *data;
+  unsigned char *baseline; /* Snapshot for sequential conflict detection. */
   HctDirtySpan *dirty;
   int writable;
 };
@@ -24,6 +25,7 @@ void hct_vfs_window_discard(HctVfsWindow *window) {
     next = span->next;
     sqlite3_free(span);
   }
+  sqlite3_free(window->baseline);
   sqlite3_free(window->data);
   sqlite3_free(window);
 }
@@ -53,6 +55,14 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
   if (rc != SQLITE_OK && rc != SQLITE_IOERR_SHORT_READ) {
     hct_vfs_window_discard(w);
     return rc;
+  }
+  if (writable) {
+    w->baseline = sqlite3_malloc64(bytes);
+    if (!w->baseline) {
+      hct_vfs_window_discard(w);
+      return SQLITE_NOMEM;
+    }
+    memcpy(w->baseline, w->data, bytes);
   }
   *out = w;
   return SQLITE_OK;
@@ -87,15 +97,35 @@ int hct_vfs_window_dirty(HctVfsWindow *w, size_t offset, size_t bytes) {
 }
 int hct_vfs_window_flush(HctVfsWindow *w) {
   HctDirtySpan *span;
+  unsigned char current[4096];
   int rc;
   if (!w) return SQLITE_MISUSE;
   if (!w->writable) return SQLITE_OK;
+  /* Check all dirty ranges before writing any. Independently flushed
+   * windows must not silently overwrite the same bytes. This is sequential
+   * optimistic detection, NOT an atomic compare-and-swap: two simultaneous
+   * flushes can still race between xRead and xWrite. */
+  for (span = w->dirty; span; span = span->next) {
+    size_t pos = span->begin;
+    while (pos < span->end) {
+      size_t remaining = span->end - pos;
+      int n = (int)(remaining < sizeof(current) ? remaining : sizeof(current));
+      rc = hct_vfs_read(w->file, current, n, w->offset + (int64_t)pos);
+      if (rc != SQLITE_OK && rc != SQLITE_IOERR_SHORT_READ) return rc;
+      if (memcmp(current, w->baseline + pos, (size_t)n) != 0)
+        return SQLITE_BUSY_SNAPSHOT;
+      pos += (size_t)n;
+    }
+  }
   while ((span = w->dirty) != NULL) {
     /* Write only explicitly dirtied bytes, never a stale page snapshot. */
     rc = hct_vfs_write(w->file, w->data + span->begin,
                        (int)(span->end - span->begin),
                        w->offset + (int64_t)span->begin);
     if (rc != SQLITE_OK) return rc;
+    /* Allow subsequent flushes of this window without self-conflict. */
+    memcpy(w->baseline + span->begin, w->data + span->begin,
+           span->end - span->begin);
     w->dirty = span->next;
     sqlite3_free(span);
   }

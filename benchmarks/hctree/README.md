@@ -113,3 +113,15 @@ exercised the range-merging implementation. This does **not** establish
 MAP_SHARED coherence, simultaneous writes to the same bytes, transactional
 rollback, or atomic commits across the main and page-map stores. HC-tree
 still is not wired to the bridge and benchmark results remain blocked.
+
+## Sequential stale-window conflict check (2026-10-31)
+
+Writable copy-backed windows now retain a snapshot of their original bytes.
+Before writing any dirty ranges, a flush rereads those ranges and returns
+`SQLITE_BUSY_SNAPSHOT` if another completed flush modified the same bytes.
+The bridge test exercises a same-byte conflict and reusing a window after its
+own successful flush, with cold RocksDB reopen verification. This is **not**
+an atomic compare-and-swap or a locking protocol: simultaneous flushes can
+race between verification and write. Nor are main and page-map commits atomic.
+HC-tree itself is not yet wired to this bridge, so no integrated benchmark
+throughput is valid.

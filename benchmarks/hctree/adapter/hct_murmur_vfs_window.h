@@ -1,8 +1,9 @@
 /* Explicit dirty-byte windows for experimental HC-tree/Murmur I/O.
  * NOT POSIX MAP_SHARED: callers must mark every modified range and flush.
  * Distinct dirty byte ranges from overlapping snapshots no longer clobber
- * each other; concurrent same-byte writes, locking and atomic main+pagemap
- * commit are NOT supported.
+ * each other. Sequential same-byte conflicts return SQLITE_BUSY_SNAPSHOT
+ * before any range is written. Simultaneous flush races, locking and
+ * atomic main+pagemap commit are NOT supported.
  */
 #ifndef HCT_MURMUR_VFS_WINDOW_H
 #define HCT_MURMUR_VFS_WINDOW_H
