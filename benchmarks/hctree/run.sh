@@ -22,6 +22,14 @@ if [[ ! -f "$OUT/hctree-src/manifest.uuid" ]] || [[ "$(tr -d '\r\n' < "$OUT/hctr
   exit 1
 fi
 cp "$OUT/hctree-src/manifest.uuid" "$OUT/hctree-fossil-commit.txt"
+# Keep the official pinned HC-tree tree untouched for the standalone
+# reference. Only the integrated engine may use the independently staged
+# source. Otherwise a future adapter patch would never reach the engine
+# being benchmarked (and the reference engine would be modified as well).
+INTEGRATED_SRC="$OUT/hctree-integrated-src"
+python3 "$ROOT/benchmarks/hctree/adapter/prepare_source.py" \
+  --source "$OUT/hctree-src" --output "$INTEGRATED_SRC" \
+  | tee "$OUT/hctree-staging.txt"
 # Preflight before compiling HC-tree or RocksDB: its current storage backend
 # bypasses SQLite's VFS via direct POSIX I/O and shared mmap. Merely passing
 # vfs=sqlite-murmur cannot make those pages reside in Murmur/RocksDB.
@@ -35,8 +43,9 @@ cp "$OUT/hctree-src/manifest.uuid" "$OUT/hctree-fossil-commit.txt"
   echo "Murmur VFS mmap support:"
   grep -n 'x_fetch: None' "$ROOT/crates/murmur-storage/src/vfs.rs" || true
 } | tee "$OUT/hctree-storage-audit.txt"
-if ! grep -q 'HCTREE_MURMUR_IO_ADAPTER' "$OUT/hctree-src/src/hct_file.c"; then
-  echo "BENCH_ERROR,HC-tree uses direct POSIX I/O and mmap outside Murmur VFS. Both database and page-map I/O require a durable RocksDB-backed adapter; integrated measurements are invalid." \
+if [[ ! -f "$ROOT/benchmarks/hctree/adapter/READY" ]] || \
+   ! grep -q 'HCTREE_MURMUR_IO_ADAPTER' "$INTEGRATED_SRC/src/hct_file.c"; then
+  echo "BENCH_ERROR,Staged HC-tree lacks a verified Murmur storage adapter. Both database and page-map I/O require durable RocksDB-backed integration; no integrated measurements are valid." \
     | tee "$OUT/integrated-storage-blocker.txt" >&2
   exit 1
 fi
@@ -57,12 +66,16 @@ for repl in off; do
     --batch=1 --replication="$repl" > "$OUT/hctree-smoke-$repl.txt"
 done
 # Integrated comparison is allowed only after the pre-build adapter check.
+# Generate the amalgamation *from the patched tree*; otherwise CMake could
+# link the unmodified POSIX implementation even after an adapter lands.
+(cd "$INTEGRATED_SRC" && ./configure --enable-shared && make -j2 libsqlite3.so)
+test -f "$INTEGRATED_SRC/sqlite3.c"
 # Runtime format and RocksDB statistics checks in benchmark.cpp remain mandatory.
 cmake -S "$ROOT" -B "$ROOT/build-hctree-integrated" -DCMAKE_BUILD_TYPE=Release "${CACHE_FLAGS[@]}" \
   -DSQLITE_MURMUR_BUILD_TESTS=OFF -DSQLITE_MURMUR_BUILD_BENCHMARKS=ON \
   -DSQLITE_MURMUR_ENABLE_CRSQLITE=ON \
   -DSQLITE_MURMUR_SQLITE_ENGINE=hctree \
-  -DSQLITE_MURMUR_HCTREE_SOURCE_DIR="$OUT/hctree-src"
+  -DSQLITE_MURMUR_HCTREE_SOURCE_DIR="$INTEGRATED_SRC"
 cmake --build "$ROOT/build-hctree-integrated" --target benchmark --parallel 2
 # Fail quickly if the HC-tree URI, file format, or cr-sqlite integration fails.
 for repl in off on; do
