@@ -100,3 +100,16 @@ of every mapped-page access, write notification, visibility/locking
 semantics, and crash-consistent main/page-map commit. Do not enable the
 integrated benchmark or report HC-tree throughput on the strength of
 this experimental window alone.
+
+## Exact dirty-byte window ranges (2026-10-31)
+
+The copy-backed window now records sparse, coalesced **byte ranges**, not
+whole dirty pages. Two independent windows loaded from the same snapshot can
+flush changes to different bytes in the same 4 KiB page without overwriting
+one another's unrelated modifications. The RocksDB bridge integration test
+checks those writes after a cold restart, including two distinct pages and
+read-only dirty-mark rejection. A small standalone ASan/UBSan test also
+exercised the range-merging implementation. This does **not** establish
+MAP_SHARED coherence, simultaneous writes to the same bytes, transactional
+rollback, or atomic commits across the main and page-map stores. HC-tree
+still is not wired to the bridge and benchmark results remain blocked.

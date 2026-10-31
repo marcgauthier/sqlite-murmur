@@ -58,6 +58,31 @@ int main() {
     hct_vfs_window_discard(window);
     window = nullptr;
 
+    // Two windows start from the same snapshot. Writing whole dirty 4 KiB
+    // pages would lose the first window's unrelated bytes when the second
+    // window flushes. Exact dirty byte ranges must survive cold reopening.
+    HctVfsWindow *left = nullptr, *right = nullptr;
+    ck(hct_vfs_window_open(a, 0, 8192, 1, &left), "open left snapshot");
+    ck(hct_vfs_window_open(a, 0, 8192, 1, &right), "open right snapshot");
+    auto *leftData = static_cast<char *>(hct_vfs_window_data(left));
+    auto *rightData = static_cast<char *>(hct_vfs_window_data(right));
+    leftData[20] = 'L';
+    leftData[4104] = '1';
+    rightData[21] = 'R';
+    rightData[4105] = '2';
+    ck(hct_vfs_window_dirty(left, 20, 1), "left first byte");
+    ck(hct_vfs_window_dirty(left, 4104, 1), "left second page");
+    ck(hct_vfs_window_dirty(right, 21, 1), "right first byte");
+    ck(hct_vfs_window_dirty(right, 4105, 1), "right second page");
+    ck(hct_vfs_window_close(left), "flush left snapshot");
+    ck(hct_vfs_window_close(right), "flush right snapshot");
+    ck(hct_vfs_commit(a), "commit overlapping snapshots");
+    ck(hct_vfs_window_open(a, 0, 4096, 0, &window), "open read-only snapshot");
+    if (hct_vfs_window_dirty(window, 1, 1) != SQLITE_MISUSE)
+      throw std::runtime_error("read-only window accepted dirty marking");
+    ck(hct_vfs_window_close(window), "close read-only snapshot");
+    window = nullptr;
+
     sqlite_murmur_stats s1{}, s2{};
     ck(sqlite_murmur_get_stats(main.c_str(), &s1), "main stats");
     ck(sqlite_murmur_get_stats(pagemap.c_str(), &s2), "pagemap stats");
@@ -76,10 +101,17 @@ int main() {
     page.fill(0);
     ck(hct_vfs_read(a, page.data(), static_cast<int>(page.size()), 0), "read main");
     if (std::memcmp(page.data(), "hctree", 6)) throw std::runtime_error("main mismatch");
+    if (page[20] != 'L' || page[21] != 'R')
+      throw std::runtime_error("overlapping first-page windows lost writes");
     std::array<char, 6> windowRead{};
     ck(hct_vfs_read(a, windowRead.data(), 6, 4100), "read persisted dirty window");
     if (std::memcmp(windowRead.data(), "window", 6))
       throw std::runtime_error("dirty window page did not persist");
+    std::array<char, 2> overlappingRead{};
+    ck(hct_vfs_read(a, overlappingRead.data(), 2, 4104),
+       "read overlapping second-page windows");
+    if (std::memcmp(overlappingRead.data(), "12", 2))
+      throw std::runtime_error("overlapping second-page windows lost writes");
     page.fill(0);
     ck(hct_vfs_read(b, page.data(), static_cast<int>(page.size()), 0), "read pagemap");
     if (std::memcmp(page.data(), "page-map", 8)) throw std::runtime_error("pagemap mismatch");
@@ -109,7 +141,7 @@ int main() {
     ck(hct_vfs_close(b), "close second reopened pagemap"); b = nullptr;
     ck(sqlite_murmur_unregister(), "unregister");
     fs::remove_all(root);
-    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window\n";
+    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window,overlapping-windows\n";
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "HCT_MURMUR_BRIDGE_FAIL," << e.what() << "\n";

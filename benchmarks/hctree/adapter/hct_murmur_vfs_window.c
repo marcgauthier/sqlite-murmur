@@ -2,19 +2,28 @@
 #include <limits.h>
 #include <stdint.h>
 #include <string.h>
-#define HCT_WINDOW_PAGE 4096u
+
+/* Sparse, exact byte ranges. Flushing whole 4 KiB snapshot pages would
+ * overwrite unrelated writes from another independently opened window. */
+typedef struct HctDirtySpan {
+  size_t begin, end; /* Half-open byte range relative to window->data. */
+  struct HctDirtySpan *next;
+} HctDirtySpan;
 struct HctVfsWindow {
   HctVfsFile *file;
   int64_t offset;
   size_t bytes;
-  size_t pages;
   unsigned char *data;
-  unsigned char *dirty;
+  HctDirtySpan *dirty;
   int writable;
 };
 void hct_vfs_window_discard(HctVfsWindow *window) {
+  HctDirtySpan *span, *next;
   if (!window) return;
-  sqlite3_free(window->dirty);
+  for (span = window->dirty; span; span = next) {
+    next = span->next;
+    sqlite3_free(span);
+  }
   sqlite3_free(window->data);
   sqlite3_free(window);
 }
@@ -33,15 +42,12 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
   w->file = file;
   w->offset = offset;
   w->bytes = bytes;
-  w->pages = (bytes + HCT_WINDOW_PAGE - 1) / HCT_WINDOW_PAGE;
   w->writable = writable;
   w->data = sqlite3_malloc64(bytes);
-  w->dirty = sqlite3_malloc64(w->pages);
-  if (!w->data || !w->dirty) {
+  if (!w->data) {
     hct_vfs_window_discard(w);
     return SQLITE_NOMEM;
   }
-  memset(w->dirty, 0, w->pages);
   /* SQLite VFS xRead zero-fills past EOF and returns SHORT_READ. */
   rc = hct_vfs_read(file, w->data, (int)bytes, offset);
   if (rc != SQLITE_OK && rc != SQLITE_IOERR_SHORT_READ) {
@@ -55,35 +61,46 @@ void *hct_vfs_window_data(HctVfsWindow *window) {
   return window ? window->data : NULL;
 }
 int hct_vfs_window_dirty(HctVfsWindow *w, size_t offset, size_t bytes) {
-  size_t first, last, i;
+  HctDirtySpan **link, *span, *merged;
+  size_t begin, end;
   if (!w || !w->writable || !bytes || offset >= w->bytes ||
       bytes > w->bytes - offset) return SQLITE_MISUSE;
-  first = offset / HCT_WINDOW_PAGE;
-  last = (offset + bytes - 1) / HCT_WINDOW_PAGE;
-  for (i = first; i <= last; ++i) w->dirty[i] = 1;
+  /* Allocate before modifying the list: OOM must leave dirty data tracked. */
+  merged = sqlite3_malloc64(sizeof(*merged));
+  if (!merged) return SQLITE_NOMEM;
+  begin = offset;
+  end = offset + bytes;
+  link = &w->dirty;
+  while (*link && (*link)->end < begin) link = &(*link)->next;
+  while (*link && (*link)->begin <= end) {
+    span = *link;
+    if (span->begin < begin) begin = span->begin;
+    if (span->end > end) end = span->end;
+    *link = span->next;
+    sqlite3_free(span);
+  }
+  merged->begin = begin;
+  merged->end = end;
+  merged->next = *link;
+  *link = merged;
   return SQLITE_OK;
 }
 int hct_vfs_window_flush(HctVfsWindow *w) {
-  size_t i = 0;
+  HctDirtySpan *span;
+  int rc;
   if (!w) return SQLITE_MISUSE;
   if (!w->writable) return SQLITE_OK;
-  while (i < w->pages) {
-    size_t first, end, from, to;
-    int rc;
-    if (!w->dirty[i]) { ++i; continue; }
-    first = i;
-    while (i < w->pages && w->dirty[i]) ++i;
-    end = i;
-    from = first * HCT_WINDOW_PAGE;
-    to = end * HCT_WINDOW_PAGE;
-    if (to > w->bytes) to = w->bytes;
-    rc = hct_vfs_write(w->file, w->data + from, (int)(to - from),
-                       w->offset + (int64_t)from);
+  while ((span = w->dirty) != NULL) {
+    /* Write only explicitly dirtied bytes, never a stale page snapshot. */
+    rc = hct_vfs_write(w->file, w->data + span->begin,
+                       (int)(span->end - span->begin),
+                       w->offset + (int64_t)span->begin);
     if (rc != SQLITE_OK) return rc;
-    memset(w->dirty + first, 0, end - first);
+    w->dirty = span->next;
+    sqlite3_free(span);
   }
-  /* Caller must explicitly hct_vfs_commit() after flushing both files.
-   * The two independent stores still have no atomic transaction boundary. */
+  /* Caller must hct_vfs_commit() after flushing both files. The two
+   * independent stores still have no atomic transaction boundary. */
   return SQLITE_OK;
 }
 int hct_vfs_window_close(HctVfsWindow *w) {
