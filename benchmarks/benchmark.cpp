@@ -323,7 +323,7 @@ Result run(Options options) {
                 ? file->pMethods->xRead(file, magic, sizeof(magic), 0)
                 : SQLITE_NOTFOUND;
         }), db.get(), "read HC-tree file signature through Murmur VFS");
-        if (std::memcmp(magic, "HCtree database ", 16) != 0)
+        if (std::memcmp(magic, "hctree version 0", 16) != 0)
             throw std::runtime_error("HC-tree engine built but database is not HC-tree format");
         std::cout << "BENCH_ENGINE,hctree\\n";
 #else
