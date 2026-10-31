@@ -125,3 +125,16 @@ an atomic compare-and-swap or a locking protocol: simultaneous flushes can
 race between verification and write. Nor are main and page-map commits atomic.
 HC-tree itself is not yet wired to this bridge, so no integrated benchmark
 throughput is valid.
+
+## Process-local window-flush serialization (2026-10-31)
+
+The experimental bridge now uses a recursive process-local mutex around
+bridge reads, writes, truncation, sync/commit, and the **entire** window
+baseline-compare plus dirty-range-write sequence. This closes the race in
+which two simultaneous flushes could both validate the same snapshot before
+writing. The CI bridge test launches concurrent same-byte flushes and checks
+that exactly one succeeds, then verifies the winning data after a cold
+RocksDB restart. The current lock is deliberately coarse and is **not a
+performance-optimized storage design**. It does not coordinate processes or
+unadapted HC-tree POSIX I/O, protect file-handle lifetime, or make main and
+page-map commits atomic. It must not be used to claim integrated throughput.
