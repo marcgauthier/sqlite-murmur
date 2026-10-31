@@ -69,3 +69,19 @@ their throughput with that caveat.
 
 Upstream HC-tree documentation:
 https://sqlite.org/hctree/doc/hctree/doc/hctree/index.html
+
+## Experimental persistent-file VFS bridge (2026-10-31)
+
+A first C bridge in benchmarks/hctree/adapter now implements open, read,
+write, truncate, size, sync, explicit commit and close against a named
+SQLite VFS. Both the main database and -pagemap are opened as independent
+persistent main-file stores. Murmur xSync is deferred, so the bridge uses
+the commit-phase-two and flush controls to persist completed writes.
+
+The CTest suite now tests Unix-VFS reopen/truncation and actual Murmur
+RocksDB persistence/reopen and nonempty persisted-block statistics. This
+is only the file I/O foundation: it does NOT intercept HC-tree POSIX calls,
+provide mmap semantics or atomic commit across the two stores. Until
+those missing features are implemented, integrated HC-tree measurements
+remain invalid. The expensive benchmark workflow triggers only when
+adapter/READY changes, not on intermediate bridge work.
