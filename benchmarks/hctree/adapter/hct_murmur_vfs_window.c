@@ -14,6 +14,7 @@ struct HctVfsWindow {
   int64_t offset;
   size_t bytes;
   int64_t original_size; /* Detect resize since the window snapshot. */
+  uint64_t resize_epoch; /* Detect shrink/regrow to the same file size. */
   unsigned char *data;
   unsigned char *baseline; /* Snapshot for sequential conflict detection. */
   HctDirtySpan *dirty;
@@ -74,6 +75,7 @@ int hct_vfs_window_open(HctVfsFile *file, int64_t offset, size_t bytes,
     return rc;
   }
   rc = hct_vfs_size(file, &w->original_size);
+  if (rc == SQLITE_OK) rc = hct_vfs_resize_epoch(file, &w->resize_epoch);
   if (rc == SQLITE_OK) {
     /* SQLite VFS xRead zero-fills past EOF and returns SHORT_READ. */
     rc = hct_vfs_read(file, w->data, (int)bytes, offset);
@@ -136,6 +138,13 @@ int hct_vfs_window_flush(HctVfsWindow *w) {
     rc = hct_vfs_size(w->file, &current_size);
     if (rc != SQLITE_OK) goto done;
     if (current_size != w->original_size) {
+      rc = SQLITE_BUSY_SNAPSHOT;
+      goto done;
+    }
+    uint64_t epoch = 0;
+    rc = hct_vfs_resize_epoch(w->file, &epoch);
+    if (rc != SQLITE_OK) goto done;
+    if (epoch != w->resize_epoch) {
       rc = SQLITE_BUSY_SNAPSHOT;
       goto done;
     }

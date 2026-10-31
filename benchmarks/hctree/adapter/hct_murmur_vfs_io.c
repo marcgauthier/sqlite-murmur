@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <string.h>
 #include <pthread.h>
-struct HctVfsFile { sqlite3_file *handle; int murmur; unsigned int windows; };
+struct HctVfsFile { sqlite3_file *handle; int murmur; unsigned int windows; uint64_t resize_epoch; };
 
 /* Temporary process-wide recursive lock for the experimental bridge.
  * A window flush must compare its snapshot and write all dirty ranges as
@@ -63,6 +63,7 @@ int hct_vfs_open(const char *vfs_name, const char *path, int create,
   if (!file) return SQLITE_NOMEM;
   file->murmur = strcmp(vfs_name, "sqlite-murmur") == 0;
   file->windows = 0;
+  file->resize_epoch = 0;
   file->handle = sqlite3_malloc64((sqlite3_uint64)vfs->szOsFile);
   if (!file->handle) { sqlite3_free(file); return SQLITE_NOMEM; }
   memset(file->handle, 0, (size_t)vfs->szOsFile);
@@ -116,9 +117,24 @@ int hct_vfs_truncate(HctVfsFile *file, int64_t size) {
   if (!file || size < 0) return SQLITE_MISUSE;
   int rc = hct_vfs_lock();
   if (rc != SQLITE_OK) return rc;
-  rc = file->handle->pMethods->xTruncate(file->handle, size);
+  /* Even a shrink followed by regrowth to the original length invalidates
+   * copy-backed windows. Size checks alone miss this ABA resize. */
+  if (file->resize_epoch == UINT64_MAX) rc = SQLITE_FULL;
+  else {
+    rc = file->handle->pMethods->xTruncate(file->handle, size);
+    if (rc == SQLITE_OK) ++file->resize_epoch;
+  }
   hct_vfs_unlock();
   return rc;
+}
+int hct_vfs_resize_epoch(HctVfsFile *file, uint64_t *epoch) {
+  int rc;
+  if (!file || !epoch) return SQLITE_MISUSE;
+  rc = hct_vfs_lock();
+  if (rc != SQLITE_OK) return rc;
+  *epoch = file->resize_epoch;
+  hct_vfs_unlock();
+  return SQLITE_OK;
 }
 int hct_vfs_size(HctVfsFile *file, int64_t *size) {
   sqlite3_int64 value = 0;

@@ -147,3 +147,13 @@ handle while a window still exists. The RocksDB integration test exercises
 this error path before flushing the window. Callers must still serialize
 file-handle ownership and new window creation; this does not make the
 bridge a complete HC-tree storage adapter.
+
+## Resize ABA protection (2026-10-31)
+
+The copy-backed window bridge now records a per-file truncate generation as
+well as its original length. A window opened before a shrink/regrow cycle is
+rejected with `SQLITE_BUSY_SNAPSHOT` even if the file returns to exactly the
+same length; a successful same-size truncate also invalidates old snapshots.
+The cold-restart integration test checks both cases and a fresh post-resize
+write. This protects only the experimental bridge within one process, not
+HC-tree's unadapted POSIX mappings or multi-file transaction atomicity.

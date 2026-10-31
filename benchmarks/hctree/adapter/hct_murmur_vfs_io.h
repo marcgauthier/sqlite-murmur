@@ -24,6 +24,9 @@ int hct_vfs_open(const char *vfs_name, const char *path, int create, HctVfsFile 
 int hct_vfs_read(HctVfsFile *file, void *data, int bytes, int64_t offset);
 int hct_vfs_write(HctVfsFile *file, const void *data, int bytes, int64_t offset);
 int hct_vfs_truncate(HctVfsFile *file, int64_t size);
+/* A successful truncate invalidates all existing copy-backed windows,
+ * even if a later truncate restores the original length. */
+int hct_vfs_resize_epoch(HctVfsFile *file, uint64_t *epoch);
 int hct_vfs_size(HctVfsFile *file, int64_t *size);
 int hct_vfs_sync(HctVfsFile *file);
 int hct_vfs_commit(HctVfsFile *file);
