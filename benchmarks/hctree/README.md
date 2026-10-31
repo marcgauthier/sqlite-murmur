@@ -85,3 +85,18 @@ provide mmap semantics or atomic commit across the two stores. Until
 those missing features are implemented, integrated HC-tree measurements
 remain invalid. The expensive benchmark workflow triggers only when
 adapter/READY changes, not on intermediate bridge work.
+
+## Explicit dirty-page window experiment (2026-10-31)
+
+`hct_murmur_vfs_window.[ch]` provides a **copy-backed** page window
+loaded through the Murmur VFS. Callers explicitly mark modified ranges,
+flush only affected 4 KiB pages, and commit the underlying store. A
+discard operation drops unflushed edits. CI exercises persistence of a
+dirty window after a cold RocksDB restart, zero-fill beyond EOF, and
+discard without modifying the page-map.
+
+**This is not `mmap(MAP_SHARED)`.** HC-tree still needs an audited rewrite
+of every mapped-page access, write notification, visibility/locking
+semantics, and crash-consistent main/page-map commit. Do not enable the
+integrated benchmark or report HC-tree throughput on the strength of
+this experimental window alone.

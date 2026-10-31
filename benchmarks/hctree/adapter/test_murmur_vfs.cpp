@@ -1,5 +1,6 @@
 // Real Murmur/RocksDB bridge test; NOT an integrated HC-tree mmap benchmark.
 #include "hct_murmur_vfs_io.h"
+#include "hct_murmur_vfs_window.h"
 #include "sqlite_murmur.h"
 #include <array>
 #include <cstring>
@@ -38,6 +39,25 @@ int main() {
     ck(hct_vfs_write(b, page.data(), static_cast<int>(page.size()), 0), "write pagemap");
     ck(hct_vfs_commit(a), "commit main");
     ck(hct_vfs_commit(b), "commit pagemap");
+    // Explicit dirty-window access through the RocksDB VFS, including EOF
+    // zero fill. This is NOT a substitute for POSIX MAP_SHARED semantics.
+    HctVfsWindow *window = nullptr;
+    ck(hct_vfs_window_open(a, 0, 8192, 1, &window), "open writable main window");
+    auto *mapped = static_cast<char *>(hct_vfs_window_data(window));
+    if (std::memcmp(mapped, "hctree", 6) || mapped[4100] != 0)
+      throw std::runtime_error("window snapshot/EOF zero fill mismatch");
+    std::memcpy(mapped + 4100, "window", 6);
+    ck(hct_vfs_window_dirty(window, 4100, 6), "mark dirty main page");
+    ck(hct_vfs_window_close(window), "flush and close main window");
+    window = nullptr;
+    ck(hct_vfs_commit(a), "commit window write");
+    ck(hct_vfs_window_open(b, 0, 4096, 1, &window), "open pagemap window");
+    mapped = static_cast<char *>(hct_vfs_window_data(window));
+    std::memcpy(mapped, "discard", 7);
+    ck(hct_vfs_window_dirty(window, 0, 7), "mark discarded pagemap write");
+    hct_vfs_window_discard(window);
+    window = nullptr;
+
     sqlite_murmur_stats s1{}, s2{};
     ck(sqlite_murmur_get_stats(main.c_str(), &s1), "main stats");
     ck(sqlite_murmur_get_stats(pagemap.c_str(), &s2), "pagemap stats");
@@ -56,13 +76,17 @@ int main() {
     page.fill(0);
     ck(hct_vfs_read(a, page.data(), static_cast<int>(page.size()), 0), "read main");
     if (std::memcmp(page.data(), "hctree", 6)) throw std::runtime_error("main mismatch");
+    std::array<char, 6> windowRead{};
+    ck(hct_vfs_read(a, windowRead.data(), 6, 4100), "read persisted dirty window");
+    if (std::memcmp(windowRead.data(), "window", 6))
+      throw std::runtime_error("dirty window page did not persist");
     page.fill(0);
     ck(hct_vfs_read(b, page.data(), static_cast<int>(page.size()), 0), "read pagemap");
     if (std::memcmp(page.data(), "page-map", 8)) throw std::runtime_error("pagemap mismatch");
     int64_t size = -1;
     ck(hct_vfs_size(a, &size), "main size after cold restart");
-    if (size != static_cast<int64_t>(page.size()))
-      throw std::runtime_error("main size mismatch after cold restart");
+    if (size != 8192)
+      throw std::runtime_error("main window size mismatch after cold restart");
     ck(hct_vfs_size(b, &size), "pagemap size after cold restart");
     if (size != static_cast<int64_t>(page.size()))
       throw std::runtime_error("pagemap size mismatch after cold restart");
@@ -85,7 +109,7 @@ int main() {
     ck(hct_vfs_close(b), "close second reopened pagemap"); b = nullptr;
     ck(sqlite_murmur_unregister(), "unregister");
     fs::remove_all(root);
-    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation\n";
+    std::cout << "HCT_MURMUR_BRIDGE_PASS,cold-reopen-main-and-pagemap,truncation,dirty-window\n";
     return 0;
   } catch (const std::exception &e) {
     std::cerr << "HCT_MURMUR_BRIDGE_FAIL," << e.what() << "\n";

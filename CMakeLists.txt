@@ -67,7 +67,8 @@ if(SQLITE_MURMUR_BUILD_TESTS)
   add_test(NAME hctree_vfs_unix COMMAND hctree_vfs_unix_test)
   add_executable(hctree_murmur_vfs_bridge_test
     benchmarks/hctree/adapter/test_murmur_vfs.cpp
-    benchmarks/hctree/adapter/hct_murmur_vfs_io.c)
+    benchmarks/hctree/adapter/hct_murmur_vfs_io.c
+    benchmarks/hctree/adapter/hct_murmur_vfs_window.c)
   target_include_directories(hctree_murmur_vfs_bridge_test PRIVATE benchmarks/hctree/adapter)
   target_link_libraries(hctree_murmur_vfs_bridge_test PRIVATE sqlite_murmur)
   add_test(NAME hctree_murmur_vfs_bridge COMMAND hctree_murmur_vfs_bridge_test)
