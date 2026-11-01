@@ -1,5 +1,6 @@
 // Backend comparison suite: 80% destination reads and 20% local or replicated row writes.
 #include "sqlite_murmur.h"
+#include "hctree/hctree_format.h"
 #include "replication_blob.h"
 #include <chrono>
 #include <cstddef>
@@ -346,14 +347,14 @@ Result run(Options options) {
 #ifdef SQLITE_MURMUR_HCTREE_ENGINE
         // Verify the actual HC-tree file signature through Murmur's VFS,
         // rather than accidentally benchmarking the stock SQLite btree.
-        char magic[16]{};
+        unsigned char header[hctree_format::kHeaderBytes]{};
         check(withMurmurMainFile(path, [&](sqlite3_file *file) {
             return file->pMethods->xRead
-                ? file->pMethods->xRead(file, magic, sizeof(magic), 0)
+                ? file->pMethods->xRead(file, header, sizeof(header), 0)
                 : SQLITE_NOTFOUND;
         }), db.get(), "read HC-tree file signature through Murmur VFS");
-        if (std::memcmp(magic, "hctree version 0", 16) != 0)
-            throw std::runtime_error("HC-tree engine built but database is not HC-tree format");
+        if (!hctree_format::valid_header(header, sizeof(header), pageSize))
+            throw std::runtime_error("HC-tree engine built but Murmur VFS does not contain the expected HC-tree header/page size");
         std::cout << "BENCH_ENGINE,hctree\n";
 #else
         std::cout << "BENCH_ENGINE,standard\n";

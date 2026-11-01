@@ -16,6 +16,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Validate HC-tree benchmark artifact parser
         run: python3 -m unittest discover -s tests -p test_hctree_report.py -v
+      - name: Validate pinned HC-tree database header guard
+        run: |
+          g++ -std=c++17 -Wall -Wextra -Werror -pedantic -Ibenchmarks/hctree tests/hctree_format_test.cpp -o /tmp/hctree_format_test
+          /tmp/hctree_format_test
       - name: Install build tools
         run: |
           sudo apt-get update -qq

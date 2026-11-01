@@ -1,6 +1,7 @@
 // Local mixed-workload benchmark for the official SQLite HC-tree branch.
 // HCTree native replication is deliberately disabled: Murmur owns replication.
 #include <sqlite3.h>
+#include "hctree_format.h"
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -49,7 +50,7 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
    sql(d,"COMMIT");
   }
  }
- {std::ifstream f(dbpath,std::ios::binary);char magic[16]={};f.read(magic,16);if(f.gcount()!=16)throw std::runtime_error("database header too short");std::cerr<<"HCTREE_HEADER_HEX,";for(unsigned char c:magic){const char *hex="0123456789abcdef";std::cerr<<hex[c>>4]<<hex[c&15];}std::cerr<<"\\n";if(std::memcmp(magic,"SQLite format 3",15)==0)throw std::runtime_error("stock SQLite file format detected");}
+ {std::ifstream f(dbpath,std::ios::binary);unsigned char header[hctree_format::kHeaderBytes]{};f.read(reinterpret_cast<char*>(header),sizeof(header));if(f.gcount()!=static_cast<std::streamsize>(sizeof(header)))throw std::runtime_error("HC-tree database header too short");if(!hctree_format::valid_header(header,sizeof(header),4096))throw std::runtime_error("not the expected HC-tree database header/page size");}
  if(scalar(d,"SELECT count(*) FROM records")!=static_cast<long long>(SEED))throw std::runtime_error("seed count wrong");
  unsigned long long writes=0,transactions=0,rng=1234*0x9e3779b97f4a7c15ULL;
  double txDuration=0,elapsed=0;
