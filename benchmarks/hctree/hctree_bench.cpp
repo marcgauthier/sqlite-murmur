@@ -89,5 +89,5 @@ int main(int argc,char**argv){sqlite3*d=nullptr;try{
  <<"\noperations,"<<ops<<"\ntransactions,"<<transactions<<"\nops_per_second,"<<ops/elapsed
  <<"\nwrite_ops_per_second,"<<writes/elapsed<<"\nmean_write_transaction_ms,"<<txDuration*1000/transactions
  <<"\nclose_seconds,"<<closeSeconds<<"\njournal_rows,"<<journalRows<<"\ndisk_bytes,"<<diskbytes
- <<"\nsource_id,"<<sqlite3_sourceid()<<"\n";return 0;
+ <<"\nsource_id,"<<sqlite3_sourceid()<<"\nBENCH_DONE\n";return 0;
  }catch(const std::exception&e){if(d)sqlite3_close_v2(d);std::cerr<<"BENCH_ERROR,"<<e.what()<<"\n";return 1;}}

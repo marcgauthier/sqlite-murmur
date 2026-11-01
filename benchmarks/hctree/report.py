@@ -1,74 +1,168 @@
-"""Summarize six storage/replication cases without implying HCTree has replication enabled."""
+"""Validate HC-tree/Murmur benchmark artifacts before publishing throughput.
+
+replication=on in this benchmark is local cr-sqlite change tracking,
+not network/QUIC replication. Do not accept partial logs or stale files.
+"""
 import csv
-import pathlib
+import math
+from pathlib import Path
 import sys
 
-out = pathlib.Path(sys.argv[1])
-rows = []
+
+def one_line(lines, prefix, label):
+    found = [line for line in lines if line.startswith(prefix)]
+    if len(found) != 1:
+        raise ValueError(f"{label}: expected exactly one {prefix!r}, found {len(found)}")
+    return found[0][len(prefix):]
 
 
-def murmur_result(replication, batch, prefix="murmur"):
-    text = (out / f"{prefix}-{replication}-{batch}.txt").read_text()
+def number(result, key, label, integer=False):
+    try:
+        value = int(result[key]) if integer else float(result[key])
+    except (ValueError, KeyError) as error:
+        raise ValueError(f"{label}: invalid {key}") from error
+    if not integer and not math.isfinite(value):
+        raise ValueError(f"{label}: nonfinite {key}")
+    return value
+
+
+def require(condition, label, reason):
+    if not condition:
+        raise ValueError(f"{label}: {reason}")
+
+
+def completed_lines(path):
+    label = path.name
+    data = path.read_text()
+    require(data.endswith("\n"), label, "truncated log (missing newline)")
+    lines = data.splitlines()
+    require((len(lines) >= 2 and lines[-2:] == ["BENCH_DONE", "BENCH_SUITE_DONE"])
+            or (bool(lines) and lines[-1] == "BENCH_DONE"), label,
+            "missing terminal BENCH_DONE (incomplete run)")
+    require(lines.count("BENCH_DONE") == 1, label, "duplicate completion marker")
+    require(not any(line.startswith("BENCH_ERROR,") for line in lines), label,
+            "BENCH_ERROR present despite completion marker")
+    return lines
+
+
+def validate_counts(result, label, batch):
+    writes = number(result, "writes", label, True)
+    reads = number(result, "reads", label, True)
+    ops = number(result, "operations", label, True)
+    tx = number(result, "transactions", label, True)
+    seconds = number(result, "seconds", label)
+    throughput = number(result, "ops_per_second", label)
+    require(writes > 0 and reads == 4 * writes and ops == 5 * writes,
+            label, "mixed workload counts inconsistent")
+    require(tx > 0 and tx * batch == writes, label,
+            "transaction/batch count inconsistent")
+    require(seconds > 0 and throughput > 0 and
+            math.isclose(throughput, ops / seconds, rel_tol=1e-4),
+            label, "throughput does not match operations / seconds")
+    require(number(result, "mean_write_transaction_ms", label) >= 0,
+            label, "negative transaction time")
+    require(number(result, "disk_bytes", label, True) > 0,
+            label, "no persisted disk data")
+
+
+def murmur_result(out, replication, batch, prefix="murmur"):
+    label = f"{prefix}-{replication}-{batch}.txt"
+    lines = completed_lines(out / label)
     engine = "hctree" if prefix == "integrated-hctree" else "standard"
-    if f"BENCH_ENGINE,{engine}" not in text:
-        raise ValueError(f"Missing verified {engine} engine marker in {prefix}-{replication}-{batch}")
-    header = next(csv.reader([next(line for line in text.splitlines()
-                                   if line.startswith("BENCH_HEADER,"))]))[1:]
-    values = next(csv.reader([next(line for line in text.splitlines()
-                                   if line.startswith("BENCH_CSV,"))]))[1:]
+    require(one_line(lines, "BENCH_ENGINE,", label) == engine,
+            label, f"engine is not {engine}")
+    header = next(csv.reader([one_line(lines, "BENCH_HEADER,", label)]))
+    values = next(csv.reader([one_line(lines, "BENCH_CSV,", label)]))
+    require(len(header) == len(values) and len(set(header)) == len(header),
+            label, "CSV columns invalid")
     result = dict(zip(header, values))
-    if result["backend"] != "murmur" or result["replication"] != replication or int(result["batch_size"]) != batch:
-        raise ValueError(f"Murmur case mismatch: {replication}/{batch}")
-    if replication == "on" and int(result["tracked_changes"]) < int(result["writes"]):
-        raise ValueError("Murmur replication metadata missing")
-    if replication == "off" and int(result["tracked_changes"]) != 0:
-        raise ValueError("Unexpected Murmur replication metadata")
+    require(result.get("suite") == "single" and result.get("backend") == "murmur"
+            and result.get("replication") == replication
+            and number(result, "batch_size", label, True) == batch,
+            label, "case configuration mismatch")
+    config = one_line(lines, "BENCH_CONFIG,", label)
+    settings = dict(part.split("=", 1) for part in config.split(",") if "=" in part)
+    require(settings.get("replication") == replication and
+            settings.get("batch_size") == str(batch) and
+            settings.get("encryption") == "on" and
+            settings.get("vfs_block_size") == "4096" and
+            settings.get("ingest") == "local" and
+            settings.get("rocksdb_sync") == "1",
+            label, "expected Murmur VFS/benchmark settings missing")
+    validate_counts(result, label, batch)
+    tracked = number(result, "tracked_changes", label, True)
+    require(tracked == (number(result, "writes", label, True)
+                        if replication == "on" else 0),
+            label, "local cr-sqlite change count mismatch")
+    require(number(result, "logical_database_bytes", label, True) > 0,
+            label, "empty logical database")
+    require(number(result, "rocksdb_files_bytes", label, True) > 0,
+            label, "missing RocksDB files")
     return result
 
 
-def hctree_result(batch):
-    result = dict(line.split(",", 1) for line in
-                  (out / f"hctree-off-{batch}.txt").read_text().splitlines() if "," in line)
-    if result["backend"] != "hctree" or result["replication"] != "off" or int(result["batch_size"]) != batch:
-        raise ValueError(f"HCTree storage-only case mismatch: {batch}")
-    if int(result["journal_rows"]) != 0:
-        raise ValueError("HCTree native journal unexpectedly enabled")
+def hctree_result(out, batch):
+    label = f"hctree-off-{batch}.txt"
+    lines = completed_lines(out / label)
+    result = {}
+    for line in lines[:-1]:
+        if line == "BENCH_DONE":
+            continue
+        if "," not in line:
+            raise ValueError(f"{label}: invalid output line {line!r}")
+        key, value = line.split(",", 1)
+        if key in result:
+            raise ValueError(f"{label}: duplicate key {key}")
+        result[key] = value
+    require(result.get("backend") == "hctree" and
+            result.get("replication") == "off" and
+            number(result, "batch_size", label, True) == batch,
+            label, "standalone case configuration mismatch")
+    require(number(result, "journal_rows", label, True) == 0,
+            label, "native HC-tree replication unexpectedly enabled")
+    require(bool(result.get("source_id")), label, "missing pinned engine source id")
+    validate_counts(result, label, batch)
     return result
 
 
-for batch in (1, 100):
-    hctree = hctree_result(batch)
-    hctree_ops = float(hctree["ops_per_second"])
-    rows.append(("off", batch, "hctree", hctree_ops, hctree["writes"],
-                 hctree["mean_write_transaction_ms"], 0, "storage-only"))
-    for repl in ("off", "on"):
-        murmur = murmur_result(repl, batch)
-        murmur_ops = float(murmur["ops_per_second"])
-        rows.append((repl, batch, "murmur", murmur_ops, murmur["writes"],
-                     murmur["mean_write_transaction_ms"], murmur["tracked_changes"],
-                     "cr-sqlite change tracking" if repl == "on" else "storage-only"))
-        if repl == "off":
-            print(f"BENCH_PAIR,storage-only,{batch},{murmur_ops:.2f},{hctree_ops:.2f},{murmur_ops/hctree_ops:.3f}")
-        else:
-            print(f"BENCH_REFERENCE,murmur-with-crsqlite-vs-hctree-storage-only,{batch},"
-                  f"{murmur_ops:.2f},{hctree_ops:.2f},{murmur_ops/hctree_ops:.3f}")
+def report(out):
+    # Validate every case before publishing any summary; reject partial runs.
+    rows = []
+    pairs = []
+    for batch in (1, 100):
+        hctree = hctree_result(out, batch)
+        hctree_ops = float(hctree["ops_per_second"])
+        rows.append(("off", batch, "hctree", hctree_ops, hctree["writes"],
+                     hctree["mean_write_transaction_ms"], 0, "storage-only"))
+        for repl in ("off", "on"):
+            murmur = murmur_result(out, repl, batch)
+            murmur_ops = float(murmur["ops_per_second"])
+            rows.append((repl, batch, "murmur", murmur_ops, murmur["writes"],
+                         murmur["mean_write_transaction_ms"], murmur["tracked_changes"],
+                         "local cr-sqlite change tracking" if repl == "on" else "storage-only"))
+            pairs.append(f"BENCH_REFERENCE,{repl},{batch},murmur={murmur_ops:.2f},standalone_hctree={hctree_ops:.2f}")
+    for batch in (1, 100):
+        for repl in ("off", "on"):
+            baseline = murmur_result(out, repl, batch)
+            integrated = murmur_result(out, repl, batch, "integrated-hctree")
+            a, b = float(baseline["ops_per_second"]), float(integrated["ops_per_second"])
+            rows.append((repl, batch, "murmur+hctree", b, integrated["writes"],
+                         integrated["mean_write_transaction_ms"], integrated["tracked_changes"],
+                         "HC-tree in Murmur; local CRR tracking " + repl))
+            pairs.append(f"BENCH_INTEGRATED_PAIR,{repl},{batch},{a:.2f},{b:.2f},{b/a:.3f}")
+    import io
+    buffer = io.StringIO()
+    writer = csv.writer(buffer)
+    writer.writerow(["replication", "batch_size", "backend", "ops_per_second", "writes",
+                     "mean_transaction_ms", "tracked_changes", "measurement_scope"])
+    writer.writerows(rows)
+    (out / "summary.csv").write_text(buffer.getvalue())
+    for line in pairs:
+        print(line)
+    print("BENCHMARK_COMPLETE,10_cases,HCTree_native_replication_disabled,QUIC_not_measured")
 
-# HC-tree is now also tested inside Murmur's RocksDB VFS, with exactly
-# the same change-tracking modes as the regular SQLite engine.
-for batch in (1, 100):
-    for repl in ("off", "on"):
-        baseline = murmur_result(repl, batch)
-        integrated = murmur_result(repl, batch, "integrated-hctree")
-        a = float(baseline["ops_per_second"])
-        b = float(integrated["ops_per_second"])
-        rows.append((repl, batch, "murmur+hctree", b, integrated["writes"],
-                     integrated["mean_write_transaction_ms"], integrated["tracked_changes"],
-                     "HC-tree engine in Murmur; CRR tracking " + repl))
-        print(f"BENCH_INTEGRATED_PAIR,{repl},{batch},{a:.2f},{b:.2f},{b/a:.3f}")
 
-with (out / "summary.csv").open("w", newline="") as f:
-    w = csv.writer(f)
-    w.writerow(["replication", "batch_size", "backend", "ops_per_second", "writes",
-                "mean_transaction_ms", "tracked_changes", "measurement_scope"])
-    w.writerows(rows)
-print("BENCHMARK_COMPLETE,10_cases,HCTree_native_replication_disabled")
+if __name__ == "__main__":
+    if len(sys.argv) != 2:
+        sys.exit("Usage: report.py RESULTS_DIR")
+    report(Path(sys.argv[1]))
